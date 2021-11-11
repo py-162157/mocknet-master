@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../vpp"
+		},
+		{
+			"path": "../../../vpp-agent"
+		}
+	],
+	"settings": {}
+}

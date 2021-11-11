@@ -1,0 +1,88 @@
+syntax = "proto3";
+package rpctest;
+option go_package = "/rpctest";
+// protoc --go_out=plugins=grpc:. rpctest.proto
+
+service Mocknet {
+    rpc process (Message) returns (Message);
+}
+
+enum MessageType {
+    // message of command type
+    emunet_creation = 0;
+    emunet_deletion = 1;
+    emunet_update = 2;
+
+    // message of request type
+    get_emunet_info = 3;
+
+    // message of response type
+    command_response = 4;
+    request_response = 5;
+}
+
+message Message {
+    MessageType type = 1;
+    Command command = 2;
+    Request request = 3;
+    Response response = 4;
+}
+
+message Command {
+    EmunetCreation emunet_creation = 1;
+    EmunetDeletion emunet_deletion = 2;
+    EmunetUpdate emunet_update = 3;
+}
+
+message Request {
+    GetEmunetInfo get_emunet_info = 1;
+}
+
+message Response {
+    bool result = 1;
+    string error_description = 2;
+    CommandResponse command_response = 3;
+    RequestResponse request_response = 4;
+}
+
+// message of command type
+message EmunetCreation {
+    Emunet emunet = 1;
+}
+
+message EmunetDeletion {}
+
+message EmunetUpdate {
+    Emunet emunet = 1;
+}
+
+
+// message of request type
+message GetEmunetInfo {}
+
+// message of response type
+message CommandResponse {}
+
+message RequestResponse {
+    Emunet emunet = 1;
+}
+
+
+// basic structure
+
+message Emunet {
+    repeated Pod pods = 1;
+    repeated Link links = 2;
+}
+
+message Link {
+    string name = 1;
+    Pod node1 = 2;
+    Pod node2 = 3;
+    string node1_inf = 4;
+    string node2_inf = 5;
+}
+
+message Pod {
+    string name = 1;
+}
