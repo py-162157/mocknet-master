@@ -42,7 +42,7 @@ func main() {
 	}
 	fmt.Println("clear all info finished")*/
 
-	/*getResp, err := kvs.Get(context.Background(), "", clientv3.WithPrefix())
+	getResp, err := kvs.Get(context.Background(), "", clientv3.WithPrefix())
 
 	if err != nil {
 		panic("error when clear all key-value")
@@ -50,19 +50,19 @@ func main() {
 	for _, kv := range getResp.Kvs {
 		fmt.Println("key:", string(kv.Key))
 		fmt.Println("value:", string(kv.Value))
-	}*/
+	}
 	//key := "/vnf-agent/mocknet-pod-s1/config/vpp/l2/v2/bridge-domain/4"
 	//value := "{\"name\":\"4\",\"interfaces\":[{\"name\":\"memif0/1\"}, {\"name\":\"memif0/2\"}, {\"name\":\"tap0\"}]}"\
 
-	key := "/vnf-agent/mocknet-pod-h1/config/vpp/l2/v2/xconnect/tap"
-	value := "{\"transmit_interface\":\"memif0/\", \"receive_interface\":\"tap\"}"
+	//key := "/vnf-agent/mocknet-pod-h1/config/vpp/l2/v2/xconnect/tap"
+	//value := "{\"transmit_interface\":\"memif0/\", \"receive_interface\":\"tap\"}"
 
 	/*key := "/vnf-agent/mocknet-pod-h1/config/vpp/v2/route/if/tap0/vrf/0/dst/10.1.2.47/32/gw/10.1.2.47"
 	value := "{\"dst_network\":\"10.1.2.47/32\", \"next_hop_addr\":\"10.1.2.47\", \"outgoing_interface\": \"tap0\"}"*/
-	_, err = kvs.Put(context.Background(), key, value)
+	/*_, err = kvs.Put(context.Background(), key, value)
 	if err != nil {
 		panic(err)
-	}
+	}*/
 
 	/*interfaces := Interfaces{
 		Ints: []BridgeDomain_Interface{

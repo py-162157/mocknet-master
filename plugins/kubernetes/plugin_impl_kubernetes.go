@@ -196,6 +196,11 @@ func (p *Plugin) Create_Deployment(message rpctest.Message) []string {
 	pod_names := make([]string, 0)
 	workers := make(map[string]string)
 	num := 0
+	/*config_map := make_configmap()
+	if _, err := p.ClientSet.CoreV1().ConfigMaps(p.K8sNamespace).Create(&config_map); err != nil {
+		p.Log.Warningln("failed to create configmap:", config_map.Name, "the error is", err)
+	}*/
+
 	for _, pod := range message.Command.EmunetCreation.Emunet.Pods {
 		deployment := make_deployment(pod.Name, num) // 获取节点的个数并创建相应deployment数据
 
@@ -235,47 +240,51 @@ func (p *Plugin) Pod_Tap_Config() error {
 	// flannel CNI default pod cidr is 10.0.0.0/16(control plane), use 10.1.0.0/16 as data plane cidr
 	pods, _ := p.ClientSet.CoreV1().Pods(p.K8sNamespace).List(metav1.ListOptions{})
 	for _, pod := range pods.Items {
-		p.Log.Infoln("configing tap interface for pod ", pod.Name)
-		cp := strings.Split(pod.Status.PodIP, ".") // conrol plane ip
-		data_plane_ip := "10.1." + cp[2] + "." + cp[3] + "/16"
-		cmd :=
-			`OUTPUT="$(ip addr | grep "tap0")"
-		while [ -z "$OUTPUT" ]
-		do 
-			echo ""
-		done
-		
-		ip route add 10.1.0.0/16 dev tap0
-		ip addr add dev tap0 `
+		p.Log.Infoln("judgement character is:", string([]byte(pod.Name)[:8]))
+		if string([]byte(pod.Name)[:9]) != "mocknet-s" {
+			p.Log.Infoln("configing tap interface for pod ", pod.Name)
+			cp := strings.Split(pod.Status.PodIP, ".") // conrol plane ip
+			data_plane_ip := "10.1." + cp[2] + "." + cp[3] + "/16"
+			cmd :=
+				`OUTPUT="$(ip addr | grep "tap0")"
+			while [ -z "$OUTPUT" ]
+			do 
+				echo ""
+			done
+			
+			ip route add 10.1.0.0/16 dev tap0
+			ip addr add dev tap0 `
 
-		req := p.ClientSet.CoreV1().RESTClient().Post().
-			Resource("pods").
-			Name(pod.Name).
-			Namespace(p.K8sNamespace).
-			SubResource("exec").
-			VersionedParams(&coreV1.PodExecOptions{
-				Command: []string{"sh", "-c", cmd + data_plane_ip},
-				Stdin:   true,
-				Stdout:  true,
-				Stderr:  true,
-				TTY:     false,
-			}, scheme.ParameterCodec)
+			req := p.ClientSet.CoreV1().RESTClient().Post().
+				Resource("pods").
+				Name(pod.Name).
+				Namespace(p.K8sNamespace).
+				SubResource("exec").
+				VersionedParams(&coreV1.PodExecOptions{
+					Command: []string{"sh", "-c", cmd + data_plane_ip},
+					Stdin:   true,
+					Stdout:  true,
+					Stderr:  true,
+					TTY:     false,
+				}, scheme.ParameterCodec)
 
-		executor, err := remotecommand.NewSPDYExecutor(p.KubeConfig, "POST", req.URL())
-		if err != nil {
-			panic(err)
+			executor, err := remotecommand.NewSPDYExecutor(p.KubeConfig, "POST", req.URL())
+			if err != nil {
+				panic(err)
+			}
+			var stdout, stderr bytes.Buffer
+			if err = executor.Stream(remotecommand.StreamOptions{
+				Stdin:  strings.NewReader(""),
+				Stdout: &stdout,
+				Stderr: &stderr,
+			}); err != nil {
+				p.Log.Infoln(err)
+			}
+			// get cmd output
+			//ret := map[string]string{"stdout": stdout.String(), "stderr": stderr.String(), "pod_name": pod.Name}
+			//p.Log.Infoln(ret)
+			p.Log.Infoln("config tap interface for pod", pod.Name, "finished")
 		}
-		var stdout, stderr bytes.Buffer
-		if err = executor.Stream(remotecommand.StreamOptions{
-			Stdin:  strings.NewReader(""),
-			Stdout: &stdout,
-			Stderr: &stderr,
-		}); err != nil {
-			p.Log.Infoln(err)
-		}
-		// 返回数据
-		ret := map[string]string{"stdout": stdout.String(), "stderr": stderr.String(), "pod_name": "mocknet-h1-fc4c5df56-tdk6f"}
-		p.Log.Infoln(ret)
 	}
 	p.Log.Infoln("pods tap config finished")
 
@@ -283,7 +292,7 @@ func (p *Plugin) Pod_Tap_Config() error {
 }
 
 func is_creation_completed(podlist []coreV1.Pod, pods []*rpctest.Pod) bool {
-	if len(podlist) != len(pods) {
+	if len(podlist) != len(pods) { // 1 for mocknet-etcd pod
 		return false
 	}
 	for _, pod := range podlist {
@@ -302,7 +311,7 @@ func make_configmap() coreV1.ConfigMap {
 		`insecure-transport: true
 dial-timeout: 10000000000
 allow-delayed-start: true
-endpoints:`
+endpoints:"__HOST_IP__:32379"`
 	return coreV1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ConfigMap",
@@ -375,7 +384,7 @@ func make_deployment(name string, num int) appsv1.Deployment {
 									Value: "mocknet-pod-" + name,
 								},
 								{
-									Name: "MY_HOST_IP",
+									Name: "HOST_IP",
 									ValueFrom: &coreV1.EnvVarSource{
 										FieldRef: &coreV1.ObjectFieldSelector{
 											FieldPath: "status.hostIP",

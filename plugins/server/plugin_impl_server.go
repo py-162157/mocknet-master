@@ -71,6 +71,7 @@ func (p *Plugin) start_server() {
 			message := <-p.DataChannel
 			if message.Type == 0 {
 				creation_count++
+				p.Log.Infoln("Server receive a message")
 				p.Log.Infoln("The message's type is 'emunet_creation'")
 				p.Log.Infoln("Start to create pods")
 				p.Kubernetes.Make_Topology(message)

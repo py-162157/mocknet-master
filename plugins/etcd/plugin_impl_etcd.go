@@ -1,10 +1,7 @@
 package etcd
 
 import (
-	"bufio"
 	"context"
-	"io"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -45,7 +42,7 @@ func (p *Plugin) Init() error {
 	p.InfToVni = make(map[string]int)
 	p.PodToHost = make(map[string]string)
 
-	go func() {
+	/*go func() {
 		// prepare etcd binary file, make sure the relative position of etcd.sh
 		cmd := exec.Command("bash", "./../scripts/etcd.sh") // 以当前命令行路径为准，当前路径为contiv-agent
 		output, err := cmd.StdoutPipe()
@@ -76,10 +73,10 @@ func (p *Plugin) Init() error {
 			index++
 			contentArray = append(contentArray, line)
 		}
-	}()
+	}()*/
 
 	if client, err := clientv3.New(clientv3.Config{
-		Endpoints:   []string{"192.168.122.100:22379"},
+		Endpoints:   []string{"0.0.0.0:32379"},
 		DialTimeout: 5 * time.Second,
 	}); err != nil {
 		p.Log.Errorln(err)
@@ -208,8 +205,6 @@ func (p *Plugin) Send_Pods_Info() error {
 		p.PodToHost[name] = p.Kubernetes.Nodeinfos[pod.Status.HostIP].Name
 	}
 
-	ops = append(ops, clientv3.OpPut("/mocknet/pods/SendStatus", "done"))
-
 	txn.Then(ops...)
 
 	_, err = txn.Commit()
@@ -266,6 +261,7 @@ func (p *Plugin) Pod_Tap_Create(pod_names []string) error {
 		value := "{\"name\":\"tap0\",\"type\":\"TAP\",\"enabled\":true, \"vrf\":0, \"tap\":{\"version\":2,\"rx_ring_size\":256, \"enable_gso\":true, \"host_if_name\":\"tap0\"}}"
 		kvs.Put(context.Background(), key, value)
 	}
+	kvs.Put(context.Background(), "/mocknet/tap/CreationBegin", "true")
 	return nil
 }
 
