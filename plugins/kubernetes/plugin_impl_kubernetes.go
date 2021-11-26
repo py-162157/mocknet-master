@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	affinity "mocknet/plugins/algorithm"
 	"mocknet/plugins/server/rpctest"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -196,13 +197,18 @@ func (p *Plugin) Create_Deployment(message rpctest.Message) []string {
 	pod_names := make([]string, 0)
 	workers := make(map[string]string)
 	num := 0
-	/*config_map := make_configmap()
-	if _, err := p.ClientSet.CoreV1().ConfigMaps(p.K8sNamespace).Create(&config_map); err != nil {
-		p.Log.Warningln("failed to create configmap:", config_map.Name, "the error is", err)
-	}*/
+	nodes, err := p.ClientSet.CoreV1().Nodes().List(metav1.ListOptions{})
+	if err != nil {
+		p.Log.Errorln("failed to get nodes infomation")
+		panic(err)
+	}
+
+	worker_assignment := affinity.AffinityClusterPartition(message, uint(len(nodes.Items))-1)
+	p.Log.Infoln("the assignment is:", worker_assignment)
 
 	for _, pod := range message.Command.EmunetCreation.Emunet.Pods {
-		deployment := make_deployment(pod.Name, num) // 获取节点的个数并创建相应deployment数据
+		// key step to create pod
+		deployment := make_deployment(pod.Name, worker_assignment[pod.Name])
 
 		if _, err := p.ClientSet.AppsV1().Deployments(p.K8sNamespace).Create(&deployment); err != nil {
 			p.Log.Errorln("failed to create deployment:", pod.Name)
@@ -240,20 +246,24 @@ func (p *Plugin) Pod_Tap_Config() error {
 	// flannel CNI default pod cidr is 10.0.0.0/16(control plane), use 10.1.0.0/16 as data plane cidr
 	pods, _ := p.ClientSet.CoreV1().Pods(p.K8sNamespace).List(metav1.ListOptions{})
 	for _, pod := range pods.Items {
-		p.Log.Infoln("judgement character is:", string([]byte(pod.Name)[:8]))
+		p.Log.Infoln("judgement character is:", string([]byte(pod.Name)[:9]))
 		if string([]byte(pod.Name)[:9]) != "mocknet-s" {
 			p.Log.Infoln("configing tap interface for pod ", pod.Name)
 			cp := strings.Split(pod.Status.PodIP, ".") // conrol plane ip
 			data_plane_ip := "10.1." + cp[2] + "." + cp[3] + "/16"
 			cmd :=
-				`OUTPUT="$(ip addr | grep "tap0")"
-			while [ -z "$OUTPUT" ]
-			do 
-				echo ""
-			done
-			
-			ip route add 10.1.0.0/16 dev tap0
-			ip addr add dev tap0 `
+				`while true
+do 
+	OUTPUT="$(ip addr | grep "tap0")"
+	if [ -z "$OUTPUT" ];then
+		sleep 1
+	else
+		break 1
+	fi
+done
+
+ip route add 10.1.0.0/16 dev tap0
+ip addr add dev tap0 `
 
 			req := p.ClientSet.CoreV1().RESTClient().Post().
 				Resource("pods").
@@ -330,15 +340,11 @@ endpoints:"__HOST_IP__:32379"`
 	}
 }
 
-func make_deployment(name string, num int) appsv1.Deployment {
+func make_deployment(name string, worker_id uint) appsv1.Deployment {
 	var replica int32 = 1
 	privileged := true
-	var role string
-	if num%2 == 0 {
-		role = "worker1"
-	} else {
-		role = "worker2"
-	}
+	role := "worker" + strconv.Itoa(int(worker_id))
+
 	return appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Deployment",
@@ -365,12 +371,13 @@ func make_deployment(name string, num int) appsv1.Deployment {
 				},
 				Spec: coreV1.PodSpec{
 					NodeSelector: map[string]string{
-						"mocknetrole": role,
+						"kubernetes.io/hostname": role,
 					},
 					Containers: []coreV1.Container{
 						{
-							Name:  "vpp-agent",
-							Image: "ligato/vpp-agent:latest",
+							Name:            "vpp-agent",
+							Image:           "ligato/vpp-agent:latest",
+							ImagePullPolicy: coreV1.PullPolicy("IfNotPresent"),
 							SecurityContext: &coreV1.SecurityContext{
 								Privileged: &privileged,
 							},
@@ -401,6 +408,10 @@ func make_deployment(name string, num int) appsv1.Deployment {
 									Name:      "host-memif-path",
 									MountPath: "/run/vpp/",
 								},
+								{
+									Name:      "etcvpp",
+									MountPath: "/etc/vpp",
+								},
 							},
 						},
 					},
@@ -418,6 +429,14 @@ func make_deployment(name string, num int) appsv1.Deployment {
 							VolumeSource: coreV1.VolumeSource{
 								HostPath: &coreV1.HostPathVolumeSource{
 									Path: "/var/run/mocknet/" + name,
+								},
+							},
+						},
+						{
+							Name: "etcvpp",
+							VolumeSource: coreV1.VolumeSource{
+								HostPath: &coreV1.HostPathVolumeSource{
+									Path: "/etc/vpp",
 								},
 							},
 						},

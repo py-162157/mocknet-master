@@ -75,6 +75,7 @@ func (p *Plugin) start_server() {
 				p.Log.Infoln("The message's type is 'emunet_creation'")
 				p.Log.Infoln("Start to create pods")
 				p.Kubernetes.Make_Topology(message)
+				//p.Kubernetes.Create_Deployment(message)
 				pod_names := p.Kubernetes.Create_Deployment(message)
 				p.ETCD.Pod_Tap_Create(pod_names)
 				p.Kubernetes.Pod_Tap_Config()

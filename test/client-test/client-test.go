@@ -31,13 +31,13 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
-	//namespace := "default"
-
-	nodes, err := clientset.CoreV1().Nodes().List(metav1.ListOptions{})
-	addresses := nodes.Items[0].Status.Addresses
-
-	for _, address := range addresses {
-		fmt.Println(address.Type, address.Address)
+	namespace := "default"
+	deployment := make_deployment(1)
+	_, err = clientset.AppsV1().Deployments(namespace).Create(&deployment)
+	if err != nil {
+		panic(err)
+	} else {
+		fmt.Println("successfully create deployment")
 	}
 
 }
@@ -55,7 +55,7 @@ func make_configmap() coreV1.ConfigMap {
 dial-timeout: 10000000000
 allow-delayed-start: true
 endpoints:
-  - "contiv-etcd.kube-system.svc.cluster.local:12379"` //格式很重要，务必按照此来，否则vpp-agent会解析失败
+  - "0.0.0.0:32379"` //格式很重要，务必按照此来，否则vpp-agent会解析失败
 	return coreV1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ConfigMap",
@@ -75,6 +75,7 @@ endpoints:
 }
 
 func make_deployment(replica int32) appsv1.Deployment {
+	privilege := true
 	return appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Deployment",
@@ -102,12 +103,17 @@ func make_deployment(replica int32) appsv1.Deployment {
 				},
 				Spec: coreV1.PodSpec{
 					NodeSelector: map[string]string{
-						"mocknetworker": "true",
+						"kubernetes.io/hostname": "worker1",
 					},
+					RestartPolicy: coreV1.RestartPolicy("Always"),
 					Containers: []coreV1.Container{
 						{
 							Name:  "vpp-agent",
 							Image: "ligato/vpp-agent:latest",
+							SecurityContext: &coreV1.SecurityContext{
+								Privileged: &privilege,
+							},
+							ImagePullPolicy: coreV1.PullPolicy("IfNotPresent"),
 							Env: []coreV1.EnvVar{
 								{
 									Name:  "ETCD_CONFIG",
@@ -123,6 +129,10 @@ func make_deployment(replica int32) appsv1.Deployment {
 									Name:      "etcd-cfg",
 									MountPath: "/etc/etcd",
 								},
+								{
+									Name:      "etcvpp",
+									MountPath: "/etc/vpp",
+								},
 							},
 						},
 					},
@@ -134,6 +144,14 @@ func make_deployment(replica int32) appsv1.Deployment {
 									LocalObjectReference: coreV1.LocalObjectReference{
 										Name: "etcd-cfg",
 									},
+								},
+							},
+						},
+						{
+							Name: "etcvpp",
+							VolumeSource: coreV1.VolumeSource{
+								HostPath: &coreV1.HostPathVolumeSource{
+									Path: "/etc/vpp",
 								},
 							},
 						},
