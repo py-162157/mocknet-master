@@ -94,18 +94,3 @@ spec:
   ports:
     - port: 22379
       nodePort: 32379
-
----
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: etcd-cfg
-  namespace: default
-data:
-  etcd.conf: |
-    dial-timeout: 10000000000
-    allow-delayed-start: true
-    insecure-transport: true
-    endpoints:
-      - "__HOST_IP__:32379"

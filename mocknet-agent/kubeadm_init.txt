@@ -32,13 +32,13 @@
 [control-plane] Creating static Pod manifest for "kube-scheduler"
 [etcd] Creating static Pod manifest for local etcd in "/etc/kubernetes/manifests"
 [wait-control-plane] Waiting for the kubelet to boot up the control plane as static Pods from directory "/etc/kubernetes/manifests". This can take up to 4m0s
-[apiclient] All control plane components are healthy after 19.505743 seconds
+[apiclient] All control plane components are healthy after 18.504971 seconds
 [upload-config] Storing the configuration used in ConfigMap "kubeadm-config" in the "kube-system" Namespace
 [kubelet] Creating a ConfigMap "kubelet-config-1.22" in namespace kube-system with the configuration for the kubelets in the cluster
 [upload-certs] Skipping phase. Please see --upload-certs
 [mark-control-plane] Marking the node master as control-plane by adding the labels: [node-role.kubernetes.io/master(deprecated) node-role.kubernetes.io/control-plane node.kubernetes.io/exclude-from-external-load-balancers]
 [mark-control-plane] Marking the node master as control-plane by adding the taints [node-role.kubernetes.io/master:NoSchedule]
-[bootstrap-token] Using token: l4smq1.n5vg4befokam9t9c
+[bootstrap-token] Using token: nfzfjh.6ni2zhn2ouy1y9pe
 [bootstrap-token] Configuring bootstrap tokens, cluster-info ConfigMap, RBAC Roles
 [bootstrap-token] configured RBAC rules to allow Node Bootstrap tokens to get nodes
 [bootstrap-token] configured RBAC rules to allow Node Bootstrap tokens to post CSRs in order for nodes to get long term certificate credentials
@@ -67,5 +67,5 @@ Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
 
 Then you can join any number of worker nodes by running the following on each as root:
 
-kubeadm join 192.168.122.100:6443 --token l4smq1.n5vg4befokam9t9c \
-	--discovery-token-ca-cert-hash sha256:0207f71f16dd763aadaa1a37f8ddbc254e47064911fc9c04c79e0d41669e4ce6 
+kubeadm join 192.168.122.100:6443 --token nfzfjh.6ni2zhn2ouy1y9pe \
+	--discovery-token-ca-cert-hash sha256:1a198d94d3025dfc5e34b84cccc85fac7aa85507af612c1c2e3f53a582da4332 
