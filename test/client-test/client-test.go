@@ -10,6 +10,7 @@ import (
 	coreV1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -32,6 +33,31 @@ func main() {
 		panic(err.Error())
 	}
 	namespace := "default"
+	/*req := clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name("mocknet-h1s2-7d7ddd7b97-kcrh5").
+		Namespace(namespace).
+		SubResource("exec").
+		VersionedParams(&coreV1.PodExecOptions{
+			Command: []string{"vppctl", "-s", ":5002", "create", "tap"},
+			Stdin:   true,
+			Stdout:  true,
+			Stderr:  true,
+			TTY:     false,
+		}, scheme.ParameterCodec)
+
+	executor, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
+	if err != nil {
+		panic(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err = executor.Stream(remotecommand.StreamOptions{
+		Stdin:  strings.NewReader(""),
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}); err != nil {
+		fmt.Println(err)
+	}*/
 	deployment := make_deployment(1)
 	_, err = clientset.AppsV1().Deployments(namespace).Create(&deployment)
 	if err != nil {
@@ -103,7 +129,7 @@ func make_deployment(replica int32) appsv1.Deployment {
 				},
 				Spec: coreV1.PodSpec{
 					NodeSelector: map[string]string{
-						"kubernetes.io/hostname": "worker1",
+						"kubernetes.io/hostname": "worker2",
 					},
 					RestartPolicy: coreV1.RestartPolicy("Always"),
 					Containers: []coreV1.Container{
@@ -126,10 +152,6 @@ func make_deployment(replica int32) appsv1.Deployment {
 							},
 							VolumeMounts: []coreV1.VolumeMount{
 								{
-									Name:      "etcd-cfg",
-									MountPath: "/etc/etcd",
-								},
-								{
 									Name:      "etcvpp",
 									MountPath: "/etc/vpp",
 								},
@@ -137,16 +159,6 @@ func make_deployment(replica int32) appsv1.Deployment {
 						},
 					},
 					Volumes: []coreV1.Volume{
-						{
-							Name: "etcd-cfg",
-							VolumeSource: coreV1.VolumeSource{
-								ConfigMap: &coreV1.ConfigMapVolumeSource{
-									LocalObjectReference: coreV1.LocalObjectReference{
-										Name: "etcd-cfg",
-									},
-								},
-							},
-						},
 						{
 							Name: "etcvpp",
 							VolumeSource: coreV1.VolumeSource{

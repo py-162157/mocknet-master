@@ -55,7 +55,7 @@ func (af *Affinity) new_and_init(edges []Edge, k uint) {
 
 func (af Affinity) print_all_clusters() {
 	for name, clusters := range af.uf.items {
-		log.Println("cluster{}: {:?}", name, clusters)
+		log.Println("cluster = ", name, clusters)
 		log.Println()
 	}
 }
@@ -350,17 +350,10 @@ func partition1(v_edges map[element][]Edge, k uint) []Partition {
 func group_by_end(edges []Partition) map[element][]PartitionKey {
 	out := make(map[element][]PartitionKey)
 	for _, edge := range edges {
-		if _, ok := out[edge.ele]; ok {
-			out[edge.ele] = append(out[edge.ele], PartitionKey{
-				key:  edge.id.key,
-				edge: edge.id.edge,
-			})
-		} else {
-			out[edge.ele] = []PartitionKey{PartitionKey{
-				key:  edge.id.key,
-				edge: edge.id.edge,
-			}}
-		}
+		out[edge.ele] = append(out[edge.ele], PartitionKey{
+			key:  edge.id.key,
+			edge: edge.id.edge,
+		})
 	}
 	return out
 }
@@ -404,36 +397,25 @@ func get_hash_edges(edges []Edge) map[HashEdge]uint {
 	return hash_edges
 }
 
-func find_commen_neighbors(edges []Edge) []Edge {
+func find_commen_neighbors(edges []Edge, switch_weight uint) []Edge {
 	neighbors_of_vertex := make(map[element][]element)
-	common_neighbor_reverse := make(map[element][]element)
 	edges_of_common_neighbors := make(map[HashEdge]uint)
 	new_edges := make([]Edge, 0)
-	hash_edges := make(map[HashEdge]uint)
 	for _, e := range edges {
-		if _, ok := neighbors_of_vertex[e.start]; ok {
-			neighbors_of_vertex[e.start] = append(neighbors_of_vertex[e.start], e.end)
-		} else {
-			neighbors_of_vertex[e.start] = []element{e.end}
-		}
+		neighbors_of_vertex[e.start] = append(neighbors_of_vertex[e.start], e.end)
 	}
 	for vertex, neighbors := range neighbors_of_vertex {
-		for _, neighbor := range neighbors {
-			if _, ok := common_neighbor_reverse[neighbor]; ok {
-				common_neighbor_reverse[neighbor] = append(common_neighbor_reverse[neighbor], vertex)
-			} else {
-				common_neighbor_reverse[neighbor] = []element{vertex}
-			}
+		edge_weight := 1
+		if string([]byte(vertex.name)[:1]) == "s" {
+			edge_weight = 5
 		}
-	}
-	for _, vertexs := range common_neighbor_reverse {
-		for _, vertex1 := range vertexs {
-			for _, vertex2 := range vertexs {
+		for _, vertex1 := range neighbors {
+			for _, vertex2 := range neighbors {
 				if vertex1 != vertex2 {
 					if _, ok := edges_of_common_neighbors[HashEdge{start: element(vertex1), end: element(vertex2)}]; ok {
-						edges_of_common_neighbors[HashEdge{start: element(vertex1), end: element(vertex2)}] += 1
+						edges_of_common_neighbors[HashEdge{start: element(vertex1), end: element(vertex2)}] += uint(edge_weight)
 					} else {
-						edges_of_common_neighbors[HashEdge{start: element(vertex1), end: element(vertex2)}] = 1
+						edges_of_common_neighbors[HashEdge{start: element(vertex1), end: element(vertex2)}] = uint(edge_weight)
 					}
 				}
 			}
@@ -446,7 +428,6 @@ func find_commen_neighbors(edges []Edge) []Edge {
 			end:    element(pair.end),
 			weight: weight,
 		})
-		hash_edges[pair] = 0
 	}
 
 	return new_edges
@@ -461,6 +442,7 @@ func makeRange(min, max int) []uint {
 }
 
 func RankSwap(line []element, k uint, r uint, q []uint) []element {
+	log.Println("begin to rank swap, k=", k, "r=", r, "q=", q)
 	divided_line := make([][][]element, 0)
 	cut_size := make([]uint, 0)
 	for _, i := range makeRange(0, len(q)-1) {
@@ -652,7 +634,6 @@ func ApArray3(line1, line2, line3 uint) [][][]PartitionResult {
 }
 
 func DynamicProgram(line []element, k uint, edges map[HashEdge]uint) map[string]uint {
-	log.Println("length of line is ", len(line))
 	node_position := make(map[element]uint)
 	for _, i := range makeRange(0, len(line)) {
 		node_position[line[i]] = i
@@ -815,6 +796,7 @@ func DynamicProgram(line []element, k uint, edges map[HashEdge]uint) map[string]
 func Combination(af Affinity, partition_number uint, interval_len uint, rank_swap bool) []element {
 	q := make([]uint, 0)
 	line := af.linear_embed()
+	log.Println(line)
 	for _, i := range makeRange(0, int(partition_number)+1) {
 		q = append(q, uint(math.Floor(float64(i*uint(len(line)))/float64(partition_number))))
 	}
@@ -887,25 +869,33 @@ func make_random_graph(vertex uint) []Edge {
 func Random_mock(scale uint, partition_number uint, rank_swap bool, threshold uint) {
 	edges := make_random_graph(scale)
 	hash_edges := get_hash_edges(edges)
-	new_edges := find_commen_neighbors(edges)
+	new_edges := find_commen_neighbors(edges, 5)
 	af := make_cluster(0.4, new_edges, threshold, true, true)
 	line_after_swap := Combination(af, partition_number, uint(math.Sqrt(float64(scale/partition_number))), rank_swap)
 
 	DynamicProgram(line_after_swap, partition_number, hash_edges)
 }
 
-func generate_edges(message rpctest.Message) ([]Edge, uint) {
+func generate_edges(message rpctest.Message, switch_weight uint) ([]Edge, uint) {
 	topo := message.Command.EmunetCreation.Emunet
 	edges := make([]Edge, 0)
 	for _, edge := range topo.Links {
+		start_weight := uint(1)
+		end_weight := uint(1)
+		if string([]byte(edge.Node1.Name)[:1]) == "s" {
+			start_weight = switch_weight
+		}
+		if string([]byte(edge.Node2.Name)[:1]) == "s" {
+			end_weight = switch_weight
+		}
 		edges = append(edges, Edge{
 			start: element(Node{
 				name:   edge.Node1.Name,
-				weight: 1,
+				weight: start_weight,
 			}),
 			end: element(Node{
 				name:   edge.Node2.Name,
-				weight: 1,
+				weight: end_weight,
 			}),
 		})
 	}
@@ -913,12 +903,15 @@ func generate_edges(message rpctest.Message) ([]Edge, uint) {
 }
 
 func AffinityClusterPartition(message rpctest.Message, partition_number uint) map[string]uint {
-	edges, scale := generate_edges(message)
+	edges, scale := generate_edges(message, 10)
 	hash_edges := get_hash_edges(edges)
-	new_edges := find_commen_neighbors(edges)
+	new_edges := find_commen_neighbors(edges, 5)
+	//log.Println("new edges are:", new_edges)
 	threshold := scale / partition_number
 	af := make_cluster(0.4, new_edges, threshold, true, true)
+	//af.print_all_clusters()
 	line_after_swap := Combination(af, partition_number, uint(math.Sqrt(float64(scale/partition_number))), true)
+	log.Print("line after swap is:", line_after_swap)
 
 	return DynamicProgram(line_after_swap, partition_number, hash_edges)
 }

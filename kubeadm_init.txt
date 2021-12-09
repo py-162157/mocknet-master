@@ -1,4 +1,4 @@
-[init] Using Kubernetes version: v1.22.4
+[init] Using Kubernetes version: v1.22.2
 [preflight] Running pre-flight checks
 [preflight] Pulling images required for setting up a Kubernetes cluster
 [preflight] This might take a minute or two, depending on the speed of your internet connection
@@ -32,13 +32,13 @@
 [control-plane] Creating static Pod manifest for "kube-scheduler"
 [etcd] Creating static Pod manifest for local etcd in "/etc/kubernetes/manifests"
 [wait-control-plane] Waiting for the kubelet to boot up the control plane as static Pods from directory "/etc/kubernetes/manifests". This can take up to 4m0s
-[apiclient] All control plane components are healthy after 18.004106 seconds
+[apiclient] All control plane components are healthy after 24.053196 seconds
 [upload-config] Storing the configuration used in ConfigMap "kubeadm-config" in the "kube-system" Namespace
 [kubelet] Creating a ConfigMap "kubelet-config-1.22" in namespace kube-system with the configuration for the kubelets in the cluster
 [upload-certs] Skipping phase. Please see --upload-certs
 [mark-control-plane] Marking the node master as control-plane by adding the labels: [node-role.kubernetes.io/master(deprecated) node-role.kubernetes.io/control-plane node.kubernetes.io/exclude-from-external-load-balancers]
 [mark-control-plane] Marking the node master as control-plane by adding the taints [node-role.kubernetes.io/master:NoSchedule]
-[bootstrap-token] Using token: ifwv61.bo2d8k9gfcocishf
+[bootstrap-token] Using token: uoboo3.pcn1b64lk1t2bctw
 [bootstrap-token] Configuring bootstrap tokens, cluster-info ConfigMap, RBAC Roles
 [bootstrap-token] configured RBAC rules to allow Node Bootstrap tokens to get nodes
 [bootstrap-token] configured RBAC rules to allow Node Bootstrap tokens to post CSRs in order for nodes to get long term certificate credentials
@@ -67,5 +67,5 @@ Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
 
 Then you can join any number of worker nodes by running the following on each as root:
 
-kubeadm join 192.168.122.100:6443 --token ifwv61.bo2d8k9gfcocishf \
-	--discovery-token-ca-cert-hash sha256:01bd8f78e3abfd2e6bf5ab31b8006ca068f3818cc0a65ded776cd8234a1bb396 
+kubeadm join 192.168.122.100:6443 --token uoboo3.pcn1b64lk1t2bctw \
+	--discovery-token-ca-cert-hash sha256:87eddfcb0738bff14bc933be450fd6a7910f58c5debbeb1f488f6b1335e664ee 

@@ -170,10 +170,16 @@ func (p *Plugin) Send_Ready(count int) error {
 		p.Log.Infoln("successfully send ready signal")
 	}
 
+	p.wait_for_response("NetCreationFinished")
+
 	return nil
 }
 
-func (p *Plugin) Send_Pods_Info() error {
+func (p *Plugin) Send_Pods_Info() (map[string]string, map[string]string) {
+	// key: completed name, value: simplified name
+	pod_name_reflector := make(map[string]string)
+	// key: simplified name, value: completed name
+	pod_name_reflector_rev := make(map[string]string)
 	podlist, err := p.Kubernetes.ClientSet.CoreV1().Pods(p.K8sNamespace).List(metav1.ListOptions{})
 	if err != nil {
 		p.Log.Errorln(err)
@@ -191,8 +197,9 @@ func (p *Plugin) Send_Pods_Info() error {
 		data_plane_ip := "10.1." + cp[2] + "." + cp[3]
 
 		name := parse_pod_name(pod.Name)
+		pod_name_reflector[pod.Name] = name
+		pod_name_reflector_rev[name] = pod.Name
 		key := "/mocknet/pods/" + name
-		p.Log.Infoln("key:", key)
 		value := ""
 		value = value + "name:" + name + ","
 		value = value + "namespace:" + pod.Namespace + ","
@@ -225,14 +232,15 @@ func (p *Plugin) Send_Pods_Info() error {
 
 	p.wait_for_response("ParsePodsInfo")
 
-	return nil
+	return pod_name_reflector, pod_name_reflector_rev
 }
 
 func (p *Plugin) wait_for_response(event string) error {
+	p.Log.Infoln("waiting for event", event)
 	kvs := clientv3.NewKV(p.EtcdClient)
 	for {
 		done_count := 0
-		workers_resp, err := kvs.Get(context.Background(), "/mocknet/event/"+event, clientv3.WithPrefix())
+		workers_resp, err := kvs.Get(context.Background(), "/mocknet/"+event, clientv3.WithPrefix())
 		if err != nil {
 			panic(err)
 		}
@@ -254,15 +262,21 @@ func parse_pod_name(logic_name string) string {
 	return split_name[1]
 }
 
-func (p *Plugin) Pod_Tap_Create(pod_names []string) error {
+/*func (p *Plugin) Pod_Tap_Create(pod_names []string) error {
 	kvs := clientv3.NewKV(p.EtcdClient)
 	for _, pod_name := range pod_names {
-		key := "/vnf-agent/mocknet-pod-" + parse_pod_name(pod_name) + "/config/vpp/v2/interfaces/tap0"
-		value := "{\"name\":\"tap0\",\"type\":\"TAP\",\"enabled\":true, \"vrf\":0, \"tap\":{\"version\":2,\"rx_ring_size\":256, \"enable_gso\":true, \"host_if_name\":\"tap0\"}}"
-		kvs.Put(context.Background(), key, value)
+		if string([]byte(pod_name)[:1]) != "s" {
+			key := "/vnf-agent/mocknet-pod-" + parse_pod_name(pod_name) + "/config/vpp/v2/interfaces/tap0"
+			value := "{\"name\":\"tap0\",\"type\":\"TAP\",\"enabled\":true, \"vrf\":0, \"tap\":{\"version\":2,\"rx_ring_size\":256, \"enable_gso\":true, \"host_if_name\":\"tap0\"}}"
+			kvs.Put(context.Background(), key, value)
+		}
 	}
 	kvs.Put(context.Background(), "/mocknet/tap/CreationBegin", "true")
 	return nil
+}*/
+
+func (p *Plugin) Wait_Pod_Tap_Creation() {
+	p.wait_for_response("PodTapCreation")
 }
 
 func (p *Plugin) Send_Node_info() error {
@@ -278,4 +292,16 @@ func (p *Plugin) Send_Node_info() error {
 func (p *Plugin) get_host(pod string, intf string) string {
 	name := pod + "-" + intf
 	return p.Kubernetes.IntfToHost[name]
+}
+
+func (p *Plugin) Inform_Finished_to_Workers(event string) error {
+	p.EtcdClient.Put(context.Background(), "/mocknet/"+event, "done")
+	p.Log.Infoln("informed workers that", event)
+	return nil
+}
+
+func (p *Plugin) Inform_Tap_Config_Finished(podname string) error {
+	p.EtcdClient.Put(context.Background(), "/mocknet/PodTapConfigFinished-"+podname, podname)
+	p.Log.Infoln("informed pod", podname, "that its tap interface has been configured")
+	return nil
 }

@@ -50,6 +50,7 @@ type Deps struct {
 	// key: node_ip
 	Nodeinfos            map[string]Nodeinfo
 	AssignedWorkerNumber int
+	PodList              map[string]coreV1.Pod
 }
 
 type Nodeinfo struct {
@@ -88,6 +89,7 @@ func (p *Plugin) Init() error {
 	p.Nodeinfos = make(map[string]Nodeinfo)
 	p.IntfToHost = make(map[string]string)
 	p.PodSet = make(map[string]map[string]string)
+	p.PodList = make(map[string]coreV1.Pod)
 
 	// get current kubeconfig
 	var kubeconfig *string
@@ -241,62 +243,129 @@ func (p *Plugin) Create_Deployment(message rpctest.Message) []string {
 	return pod_names
 }
 
-func (p *Plugin) Pod_Tap_Config() error {
-	// create tap interface in pod-side vpp and write route table to pod linux namespace
-	// flannel CNI default pod cidr is 10.0.0.0/16(control plane), use 10.1.0.0/16 as data plane cidr
+// create tap interface in pod-side vpp and write route table to pod linux namespace,
+// flannel CNI default pod cidr is 10.0.0.0/16(control plane), use 10.1.0.0/16 as data plane cidr
+func (p *Plugin) Pod_Tap_Config_All() error {
+	host_list := []coreV1.Pod{}
 	pods, _ := p.ClientSet.CoreV1().Pods(p.K8sNamespace).List(metav1.ListOptions{})
 	for _, pod := range pods.Items {
-		p.Log.Infoln("judgement character is:", string([]byte(pod.Name)[:9]))
+		p.PodList[pod.Name] = pod
 		if string([]byte(pod.Name)[:9]) != "mocknet-s" {
-			p.Log.Infoln("configing tap interface for pod ", pod.Name)
-			cp := strings.Split(pod.Status.PodIP, ".") // conrol plane ip
-			data_plane_ip := "10.1." + cp[2] + "." + cp[3] + "/16"
-			cmd :=
-				`while true
-do 
-	OUTPUT="$(ip addr | grep "tap0")"
-	if [ -z "$OUTPUT" ];then
-		sleep 1
-	else
-		break 1
-	fi
-done
-
-ip route add 10.1.0.0/16 dev tap0
-ip addr add dev tap0 `
-
-			req := p.ClientSet.CoreV1().RESTClient().Post().
-				Resource("pods").
-				Name(pod.Name).
-				Namespace(p.K8sNamespace).
-				SubResource("exec").
-				VersionedParams(&coreV1.PodExecOptions{
-					Command: []string{"sh", "-c", cmd + data_plane_ip},
-					Stdin:   true,
-					Stdout:  true,
-					Stderr:  true,
-					TTY:     false,
-				}, scheme.ParameterCodec)
-
-			executor, err := remotecommand.NewSPDYExecutor(p.KubeConfig, "POST", req.URL())
-			if err != nil {
-				panic(err)
+			host_list = append(host_list, pod)
+		}
+	}
+	for _, pod := range host_list {
+		//p.Log.Infoln("judgement character is:", string([]byte(pod.Name)[:9]))
+		//p.Log.Infoln("configing tap interface for pod ", pod.Name)
+		p.pod_tap_create(pod)
+		for {
+			if p.Pod_Tap_Config(pod) != nil {
+				p.pod_tap_create(pod)
+			} else {
+				break
 			}
-			var stdout, stderr bytes.Buffer
-			if err = executor.Stream(remotecommand.StreamOptions{
-				Stdin:  strings.NewReader(""),
-				Stdout: &stdout,
-				Stderr: &stderr,
-			}); err != nil {
-				p.Log.Infoln(err)
-			}
-			// get cmd output
-			//ret := map[string]string{"stdout": stdout.String(), "stderr": stderr.String(), "pod_name": pod.Name}
-			//p.Log.Infoln(ret)
-			p.Log.Infoln("config tap interface for pod", pod.Name, "finished")
 		}
 	}
 	p.Log.Infoln("pods tap config finished")
+
+	return nil
+}
+
+func (p *Plugin) Pod_Tap_Config(pod coreV1.Pod) error {
+	cp := strings.Split(pod.Status.PodIP, ".") // conrol plane ip
+	data_plane_ip := "10.1." + cp[2] + "." + cp[3] + "/16"
+	cmd :=
+		`ip route add 10.1.0.0/16 dev tap0
+ip addr add dev tap0 `
+
+	req := p.ClientSet.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(pod.Name).
+		Namespace(p.K8sNamespace).
+		SubResource("exec").
+		VersionedParams(&coreV1.PodExecOptions{
+			Command: []string{"/bin/bash", "-c", cmd + data_plane_ip},
+			Stdin:   true,
+			Stdout:  true,
+			Stderr:  true,
+			TTY:     false,
+		}, scheme.ParameterCodec)
+
+	executor, err := remotecommand.NewSPDYExecutor(p.KubeConfig, "POST", req.URL())
+	if err != nil {
+		panic(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err = executor.Stream(remotecommand.StreamOptions{
+		Stdin:  strings.NewReader(""),
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}); err != nil {
+		p.Log.Warningln(err, ", retrying")
+		return err
+	}
+	// get cmd output
+	//ret := map[string]string{"stdout": stdout.String(), "stderr": stderr.String(), "pod_name": pod.Name}
+	//p.Log.Infoln(ret)
+	p.Log.Infoln("config tap interface for pod", pod.Name, "finished")
+
+	return nil
+}
+
+func (p *Plugin) pod_tap_create(pod coreV1.Pod) error {
+	req1 := p.ClientSet.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(pod.Name).
+		Namespace(p.K8sNamespace).
+		SubResource("exec").
+		VersionedParams(&coreV1.PodExecOptions{
+			Command: []string{"vppctl", "-s", ":5002", "create", "tap"},
+			Stdin:   true,
+			Stdout:  true,
+			Stderr:  true,
+			TTY:     false,
+		}, scheme.ParameterCodec)
+
+	executor1, err := remotecommand.NewSPDYExecutor(p.KubeConfig, "POST", req1.URL())
+	if err != nil {
+		panic(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err = executor1.Stream(remotecommand.StreamOptions{
+		Stdin:  strings.NewReader(""),
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}); err != nil {
+		p.Log.Infoln(err)
+	}
+
+	req2 := p.ClientSet.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(pod.Name).
+		Namespace(p.K8sNamespace).
+		SubResource("exec").
+		VersionedParams(&coreV1.PodExecOptions{
+			Command: []string{"vppctl", "-s", ":5002", "set", "int", "state", "tap0", "up"},
+			Stdin:   true,
+			Stdout:  true,
+			Stderr:  true,
+			TTY:     false,
+		}, scheme.ParameterCodec)
+
+	executor2, err := remotecommand.NewSPDYExecutor(p.KubeConfig, "POST", req2.URL())
+	if err != nil {
+		panic(err)
+	}
+
+	if err = executor2.Stream(remotecommand.StreamOptions{
+		Stdin:  strings.NewReader(""),
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}); err != nil {
+		p.Log.Infoln(err)
+	}
+
+	p.Log.Infoln("creation tap interface for pod", pod.Name, "finished")
 
 	return nil
 }
