@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 start_time=$(date +%s)
 
