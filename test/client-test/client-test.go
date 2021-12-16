@@ -33,6 +33,10 @@ func main() {
 		panic(err.Error())
 	}
 	namespace := "default"
+	pods, err := clientset.CoreV1().Pods(namespace).List(metav1.ListOptions{})
+	for _, pod := range pods.Items {
+		fmt.Println(pod.Status.ContainerStatuses[0].RestartCount)
+	}
 	/*req := clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name("mocknet-h1s2-7d7ddd7b97-kcrh5").
@@ -58,13 +62,13 @@ func main() {
 	}); err != nil {
 		fmt.Println(err)
 	}*/
-	deployment := make_deployment(1)
+	/*deployment := make_deployment(1)
 	_, err = clientset.AppsV1().Deployments(namespace).Create(&deployment)
 	if err != nil {
 		panic(err)
 	} else {
 		fmt.Println("successfully create deployment")
-	}
+	}*/
 
 }
 

@@ -10,7 +10,7 @@ import (
 
 func main() {
 	config := clientv3.Config{
-		Endpoints:   []string{"192.168.122.100:22379"},
+		Endpoints:   []string{"0.0.0.0:32379"},
 		DialTimeout: 10 * time.Second,
 	}
 	client, err := clientv3.New(config)

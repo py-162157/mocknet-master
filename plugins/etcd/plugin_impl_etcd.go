@@ -4,12 +4,11 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"mocknet/plugins/kubernetes"
 	"mocknet/plugins/server/rpctest"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.ligato.io/cn-infra/v2/logging"
@@ -24,12 +23,23 @@ type Plugin struct {
 }
 
 type Deps struct {
-	Kubernetes *kubernetes.Plugin
-	PodToHost  map[string]string
-	VxlanVni   int
-	InfToVni   map[string]int
+	Kubernetes         *kubernetes.Plugin
+	PodToHost          PodToHostSync
+	VxlanVni           int
+	InfToVni           map[string]int
+	PluginInitFinished bool
 
 	Log logging.PluginLogger
+}
+
+type PodToHostSync struct {
+	Lock *sync.RWMutex
+	List map[string]string
+}
+
+type InfToVniSync struct {
+	Lock *sync.RWMutex
+	List map[string]int
 }
 
 func (p *Plugin) Init() error {
@@ -40,40 +50,10 @@ func (p *Plugin) Init() error {
 	p.K8sNamespace = "default"
 	p.VxlanVni = 0
 	p.InfToVni = make(map[string]int)
-	p.PodToHost = make(map[string]string)
-
-	/*go func() {
-		// prepare etcd binary file, make sure the relative position of etcd.sh
-		cmd := exec.Command("bash", "./../scripts/etcd.sh") // 以当前命令行路径为准，当前路径为contiv-agent
-		output, err := cmd.StdoutPipe()
-		if err != nil {
-			p.Log.Errorln(err)
-			panic(err)
-		}
-
-		if err := cmd.Start(); err != nil {
-			p.Log.Errorln(err)
-			panic(err)
-		} else {
-			p.Log.Infoln("successfully setup and start etcd!")
-		}
-
-		reader := bufio.NewReader(output)
-
-		var contentArray = make([]string, 0, 5)
-		var index int
-		contentArray = contentArray[0:0]
-
-		for {
-			line, err2 := reader.ReadString('\n')
-			if err2 != nil || io.EOF == err2 {
-				break
-			}
-			p.Log.Infoln(line)
-			index++
-			contentArray = append(contentArray, line)
-		}
-	}()*/
+	p.PodToHost = PodToHostSync{
+		Lock: &sync.RWMutex{},
+		List: make(map[string]string),
+	}
 
 	if client, err := clientv3.New(clientv3.Config{
 		Endpoints:   []string{"0.0.0.0:32379"},
@@ -85,6 +65,8 @@ func (p *Plugin) Init() error {
 		p.EtcdClient = client
 		p.Log.Infoln("successfully connected to master etcd!")
 	}
+
+	p.PluginInitFinished = true
 
 	return nil
 }
@@ -121,15 +103,11 @@ func (p *Plugin) Commit_Create_Info(message rpctest.Message) error {
 		node2 := link.Node2.Name
 		intf1 := link.Node1Inf
 		intf2 := link.Node2Inf
-		if p.get_host(node1, intf1) != p.get_host(node2, intf2) {
-			p.InfToVni[node1+"-"+intf1] = p.VxlanVni
-			p.InfToVni[node2+"-"+intf2] = p.VxlanVni
-			p.VxlanVni += 1
-		} else {
-			// -1 mean no need to vxlan connect
-			p.InfToVni[node1+"-"+intf1] = -1
-			p.InfToVni[node2+"-"+intf2] = -1
-		}
+
+		p.InfToVni[node1+"-"+intf1] = p.VxlanVni
+		p.InfToVni[node2+"-"+intf2] = p.VxlanVni
+		p.VxlanVni += 1
+
 	}
 
 	for _, link := range links {
@@ -139,6 +117,7 @@ func (p *Plugin) Commit_Create_Info(message rpctest.Message) error {
 		value = value + "node1_inf:" + link.Node1Inf + ","
 		value = value + "node2_inf:" + link.Node2Inf + ","
 		value = value + "vni:" + strconv.Itoa(p.InfToVni[link.Node1.Name+"-"+link.Node1Inf])
+		//p.Log.Infoln("key =", "/mocknet/link/"+link.Name, "value =", value)
 
 		ops = append(ops, clientv3.OpPut("/mocknet/link/"+link.Name, value))
 	}
@@ -175,64 +154,44 @@ func (p *Plugin) Send_Ready(count int) error {
 	return nil
 }
 
-func (p *Plugin) Send_Pods_Info() (map[string]string, map[string]string) {
-	// key: completed name, value: simplified name
-	pod_name_reflector := make(map[string]string)
-	// key: simplified name, value: completed name
-	pod_name_reflector_rev := make(map[string]string)
-	podlist, err := p.Kubernetes.ClientSet.CoreV1().Pods(p.K8sNamespace).List(metav1.ListOptions{})
-	if err != nil {
-		p.Log.Errorln(err)
-		panic(err)
-	}
-
-	pods := podlist.Items
-
+func (p *Plugin) Send_Pod_Info(mocknet_pod *kubernetes.MocknetPod) error {
+	p.PodToHost.Lock.Lock()
+	defer p.PodToHost.Lock.Unlock()
 	kvs := clientv3.NewKV(p.EtcdClient)
-	txn := kvs.Txn(context.Background())
-	ops := []clientv3.Op{}
 
-	for _, pod := range pods {
-		cp := strings.Split(pod.Status.PodIP, ".") // conrol plane ip
-		data_plane_ip := "10.1." + cp[2] + "." + cp[3]
+	cp := strings.Split(mocknet_pod.Pod.Status.PodIP, ".") // conrol plane ip
+	//p.Log.Infoln("podip is", mocknet_pod.Pod.Status.PodIP)
+	data_plane_ip := "10.1." + cp[2] + "." + cp[3]
 
-		name := parse_pod_name(pod.Name)
-		pod_name_reflector[pod.Name] = name
-		pod_name_reflector_rev[name] = pod.Name
-		key := "/mocknet/pods/" + name
-		value := ""
-		value = value + "name:" + name + ","
-		value = value + "namespace:" + pod.Namespace + ","
-		value = value + "podip:" + data_plane_ip + ","
-		value = value + "hostip:" + pod.Status.HostIP + ","
-		value = value + "hostname:" + p.Kubernetes.Nodeinfos[pod.Status.HostIP].Name
+	name := Parse_pod_name(mocknet_pod.Pod.Name)
+	key := "/mocknet/pods/" + name
+	value := ""
+	value = value + "name:" + name + ","
+	value = value + "namespace:" + mocknet_pod.Pod.Namespace + ","
+	value = value + "podip:" + data_plane_ip + ","
+	value = value + "hostip:" + mocknet_pod.Pod.Status.HostIP + ","
+	value = value + "hostname:" + p.Kubernetes.Nodeinfos[mocknet_pod.Pod.Status.HostIP].Name + ","
+	value = value + "restartcount:" + strconv.Itoa(int(mocknet_pod.RestartCount))
 
-		ops = append(ops, clientv3.OpPut(key, value))
+	p.PodToHost.List[name] = p.Kubernetes.Nodeinfos[mocknet_pod.Pod.Status.HostIP].Name
 
-		p.PodToHost[name] = p.Kubernetes.Nodeinfos[pod.Status.HostIP].Name
-	}
-
-	txn.Then(ops...)
-
-	_, err = txn.Commit()
+	_, err := kvs.Put(context.Background(), key, value)
 	if err != nil {
 		p.Log.Errorln(err)
 		panic(err)
 	} else {
-		p.Log.Infoln("successfully commit pods data to master etcd")
+		p.Log.Infoln("commited data to master etcd for pod", mocknet_pod.Pod.Name)
 	}
 
 	for _, pod := range p.Kubernetes.MocknetTopology.Pods {
 		for _, intf := range pod.Infs {
 			key := pod.Name + "-" + intf
-			value := p.PodToHost[pod.Name]
+			value := p.PodToHost.List[pod.Name]
 			p.Kubernetes.IntfToHost[key] = value
 		}
 	}
 
-	p.wait_for_response("ParsePodsInfo")
-
-	return pod_name_reflector, pod_name_reflector_rev
+	return nil
 }
 
 func (p *Plugin) wait_for_response(event string) error {
@@ -249,15 +208,18 @@ func (p *Plugin) wait_for_response(event string) error {
 				done_count += 1
 			}
 		}
-		if done_count == p.Kubernetes.AssignedWorkerNumber {
+		//p.Log.Infoln("AssignedWorkerNumber is", p.Kubernetes.AssignedWorkerNumber)
+		//p.Log.Infoln("done_count is", done_count)
+		if done_count == p.Kubernetes.AssignedWorkerNumber && p.Kubernetes.AssignedWorkerNumber >= 1 {
 			p.Log.Infoln("all workers have finished ", event)
 			break
 		}
+		time.Sleep(time.Second)
 	}
 	return nil
 }
 
-func parse_pod_name(logic_name string) string {
+func Parse_pod_name(logic_name string) string {
 	split_name := strings.Split(logic_name, "-")
 	return split_name[1]
 }

@@ -53,7 +53,7 @@ spec:
           args:
             - -c
             - /usr/local/bin/etcd --name=mocknet-etcd --data-dir=/var/MOCKNET/mocknet-data
-              --advertise-client-urls=http://0.0.0.0:22379 --listen-client-urls=http://0.0.0.0:22379 --listen-peer-urls=http://0.0.0.0:22380
+              --advertise-client-urls=http://0.0.0.0:12379 --listen-client-urls=http://0.0.0.0:12379 --listen-peer-urls=http://0.0.0.0:12380
           volumeMounts:
             - name: var-etcd
               mountPath: /var/etcd/
@@ -68,7 +68,7 @@ spec:
                   then
                      HOST_IP="[$HOST_IP]"
                   fi
-                  etcdctl get --endpoints=$HOST_IP:22379 /
+                  etcdctl get --endpoints=$HOST_IP:12379 /
             periodSeconds: 3
             initialDelaySeconds: 20
           resources:
@@ -92,5 +92,5 @@ spec:
   selector:
     k8s-app: mocknet-etcd
   ports:
-    - port: 22379
+    - port: 12379
       nodePort: 32379

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	affinity "mocknet/plugins/algorithm"
 	"mocknet/plugins/server/rpctest"
@@ -24,8 +26,9 @@ import (
 )
 
 const (
-	VTEP_PREFIX  = "10.2.0."
-	VTEP_POSTFIX = "/24"
+	VTEP_PREFIX               = "10.2.0."
+	VTEP_POSTFIX              = "/24"
+	POD_STATUS_WATCH_INTERVAL = 3 * time.Second
 )
 
 type Plugin struct {
@@ -48,9 +51,23 @@ type Deps struct {
 	// key: interface id in mininet(podname-intfid), value: hostname
 	IntfToHost map[string]string
 	// key: node_ip
-	Nodeinfos            map[string]Nodeinfo
-	AssignedWorkerNumber int
-	PodList              map[string]coreV1.Pod
+	Nodeinfos              map[string]Nodeinfo
+	AssignedWorkerNumber   int
+	PodList                MocknetPodSync
+	PluginInitFinished     bool
+	Pod_name_reflector     map[string]string // key: completed name, value: simplified name
+	Pod_name_reflector_rev map[string]string // key: simplified name, value: completed name
+}
+
+type MocknetPodSync struct {
+	Lock *sync.RWMutex
+	List map[string]*MocknetPod
+}
+
+type MocknetPod struct {
+	Handled      bool
+	RestartCount int32
+	Pod          coreV1.Pod
 }
 
 type Nodeinfo struct {
@@ -89,7 +106,12 @@ func (p *Plugin) Init() error {
 	p.Nodeinfos = make(map[string]Nodeinfo)
 	p.IntfToHost = make(map[string]string)
 	p.PodSet = make(map[string]map[string]string)
-	p.PodList = make(map[string]coreV1.Pod)
+	p.PodList = MocknetPodSync{
+		Lock: &sync.RWMutex{},
+		List: make(map[string]*MocknetPod),
+	}
+	p.Pod_name_reflector = make(map[string]string)
+	p.Pod_name_reflector_rev = make(map[string]string)
 
 	// get current kubeconfig
 	var kubeconfig *string
@@ -116,9 +138,12 @@ func (p *Plugin) Init() error {
 		p.ClientSet = clientset
 	}
 
+	go p.watch_pod_status()
+
 	if p.Deps.Log == nil {
 		p.Deps.Log = logging.ForPlugin(p.String())
 	}
+	p.PluginInitFinished = true
 
 	return nil
 }
@@ -128,6 +153,17 @@ func (p *Plugin) String() string {
 }
 
 func (p *Plugin) Close() error {
+	return nil
+}
+
+func (p *Plugin) Get_Node_Number() error {
+	nodes, err := p.ClientSet.CoreV1().Nodes().List(metav1.ListOptions{})
+	if err != nil {
+		p.Log.Errorln("failed to get nodes infomation")
+		panic(err)
+	}
+
+	p.AssignedWorkerNumber = len(nodes.Items)
 	return nil
 }
 
@@ -197,7 +233,7 @@ func (p *Plugin) Make_Topology(message rpctest.Message) error {
 
 func (p *Plugin) Create_Deployment(message rpctest.Message) []string {
 	pod_names := make([]string, 0)
-	workers := make(map[string]string)
+	//workers := make(map[string]string)
 	num := 0
 	nodes, err := p.ClientSet.CoreV1().Nodes().List(metav1.ListOptions{})
 	if err != nil {
@@ -221,57 +257,56 @@ func (p *Plugin) Create_Deployment(message rpctest.Message) []string {
 		num++
 	}
 
-	// wait for creation finished
-	p.Log.Infoln("waiting for pods creation finish")
+	return pod_names
+}
+
+func (p *Plugin) watch_pod_status() {
+	workers := make(map[string]string)
 	for {
+		p.PodList.Lock.Lock()
 		temp_pods, err := p.ClientSet.CoreV1().Pods(p.K8sNamespace).List(metav1.ListOptions{})
 		if err != nil {
 			p.Log.Errorln(err)
 			panic(err)
 		}
-		if is_creation_completed(temp_pods.Items, message.Command.EmunetCreation.Emunet.Pods) {
-			for _, pod := range temp_pods.Items {
-				pod_names = append(pod_names, pod.Name)
+		for _, pod := range temp_pods.Items {
+			if valid_ip(pod.Status.HostIP) {
 				workers[pod.Status.HostIP] = ""
 			}
-			p.Log.Infoln("pods creation finished!")
-			break
-		}
-	}
-	p.AssignedWorkerNumber = len(workers)
-	p.Log.Infoln("AssignedWorkerNumber = ", p.AssignedWorkerNumber)
-	return pod_names
-}
-
-// create tap interface in pod-side vpp and write route table to pod linux namespace,
-// flannel CNI default pod cidr is 10.0.0.0/16(control plane), use 10.1.0.0/16 as data plane cidr
-func (p *Plugin) Pod_Tap_Config_All() error {
-	host_list := []coreV1.Pod{}
-	pods, _ := p.ClientSet.CoreV1().Pods(p.K8sNamespace).List(metav1.ListOptions{})
-	for _, pod := range pods.Items {
-		p.PodList[pod.Name] = pod
-		if string([]byte(pod.Name)[:9]) != "mocknet-s" {
-			host_list = append(host_list, pod)
-		}
-	}
-	for _, pod := range host_list {
-		//p.Log.Infoln("judgement character is:", string([]byte(pod.Name)[:9]))
-		//p.Log.Infoln("configing tap interface for pod ", pod.Name)
-		p.pod_tap_create(pod)
-		for {
-			if p.Pod_Tap_Config(pod) != nil {
-				p.pod_tap_create(pod)
+			simplified_name := Parse_pod_name(pod.Name)
+			if _, ok := p.PodList.List[simplified_name]; ok {
+				p.PodList.List[simplified_name].Pod = pod
 			} else {
-				break
+				p.PodList.List[simplified_name] = &MocknetPod{
+					Handled: false,
+					Pod:     pod,
+				}
+			}
+
+			// if pod restart, mark it with unhandled and reconfig
+			if len(pod.Status.ContainerStatuses) >= 1 {
+				if pod.Status.ContainerStatuses[0].RestartCount > p.PodList.List[simplified_name].RestartCount {
+					p.Log.Warningln("detectd a restart of pod", simplified_name)
+					p.PodList.List[simplified_name].RestartCount = pod.Status.ContainerStatuses[0].RestartCount
+					p.PodList.List[simplified_name].Handled = false
+				}
+			}
+
+			if _, ok := p.Pod_name_reflector[pod.Name]; !ok {
+				p.Pod_name_reflector[pod.Name] = simplified_name
+				p.Pod_name_reflector_rev[simplified_name] = pod.Name
 			}
 		}
+		delete(p.PodList.List, "")
+		//p.Log.Infoln("the length of podlist is", len(p.PodList.List))
+		p.PodList.Lock.Unlock()
+		p.AssignedWorkerNumber = len(workers)
+		time.Sleep(POD_STATUS_WATCH_INTERVAL)
 	}
-	p.Log.Infoln("pods tap config finished")
-
-	return nil
 }
 
 func (p *Plugin) Pod_Tap_Config(pod coreV1.Pod) error {
+	p.Log.Infoln("configuring tap interface for pod", pod.Name)
 	cp := strings.Split(pod.Status.PodIP, ".") // conrol plane ip
 	data_plane_ip := "10.1." + cp[2] + "." + cp[3] + "/16"
 	cmd :=
@@ -312,7 +347,8 @@ ip addr add dev tap0 `
 	return nil
 }
 
-func (p *Plugin) pod_tap_create(pod coreV1.Pod) error {
+func (p *Plugin) Pod_tap_create(pod coreV1.Pod) error {
+	p.Log.Infoln("creating tap interface for pod", pod.Name)
 	req1 := p.ClientSet.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(pod.Name).
@@ -336,7 +372,7 @@ func (p *Plugin) pod_tap_create(pod coreV1.Pod) error {
 		Stdout: &stdout,
 		Stderr: &stderr,
 	}); err != nil {
-		p.Log.Infoln(err)
+		p.Log.Warningln(err)
 	}
 
 	req2 := p.ClientSet.CoreV1().RESTClient().Post().
@@ -370,49 +406,31 @@ func (p *Plugin) pod_tap_create(pod coreV1.Pod) error {
 	return nil
 }
 
-func is_creation_completed(podlist []coreV1.Pod, pods []*rpctest.Pod) bool {
-	if len(podlist) != len(pods) { // 1 for mocknet-etcd pod
+func (p *Plugin) Is_Creation_Completed(pod_name string) bool {
+	p.PodList.Lock.Lock()
+	defer p.PodList.Lock.Unlock()
+	if mocknet_pod, ok := p.PodList.List[pod_name]; !ok {
+		//p.Log.Infoln("pod", pod_name, "don't exist in podlist")
 		return false
-	}
-	for _, pod := range podlist {
-		if pod.Status.Phase != "Running" {
+	} else {
+		if mocknet_pod.Pod.Status.Phase != "Running" {
+			//p.Log.Infoln("pod", pod_name, "don't in 'running' phase")
+			//p.Log.Infoln(mocknet_pod.Pod.Status.Phase)
 			return false
 		}
-		if len(pod.Status.HostIP) <= 4 || len(pod.Status.PodIP) <= 4 {
+		split_ip := strings.Split(mocknet_pod.Pod.Status.PodIP, ".")
+		//p.Log.Infoln("split_ip =", split_ip)
+		if len(split_ip) != 4 {
 			return false
 		}
 	}
 	return true
 }
 
-func make_configmap() coreV1.ConfigMap {
-	EtcdConfData :=
-		`insecure-transport: true
-dial-timeout: 10000000000
-allow-delayed-start: true
-endpoints:"__HOST_IP__:32379"`
-	return coreV1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "ConfigMap",
-			APIVersion: "v1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "etcd-cfg",
-			Namespace: "default",
-			Labels: map[string]string{
-				"name": "etcd-cfg",
-			},
-		},
-		Data: map[string]string{
-			"etcd.conf": EtcdConfData,
-		},
-	}
-}
-
 func make_deployment(name string, worker_id uint) appsv1.Deployment {
 	var replica int32 = 1
 	privileged := true
-	role := "worker" + strconv.Itoa(int(worker_id))
+	host := "worker" + strconv.Itoa(int(worker_id))
 
 	return appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{
@@ -440,7 +458,7 @@ func make_deployment(name string, worker_id uint) appsv1.Deployment {
 				},
 				Spec: coreV1.PodSpec{
 					NodeSelector: map[string]string{
-						"kubernetes.io/hostname": role,
+						"kubernetes.io/hostname": host,
 					},
 					Containers: []coreV1.Container{
 						{
@@ -551,4 +569,14 @@ func (p *Plugin) Assign_VTEP() map[string]string {
 		vtep_count += 1
 	}
 	return node_infos
+}
+
+func Parse_pod_name(logic_name string) string {
+	split_name := strings.Split(logic_name, "-")
+	return split_name[1]
+}
+
+func valid_ip(ip string) bool {
+	split_ip := strings.Split(ip, ".")
+	return len(split_ip) == 4
 }
