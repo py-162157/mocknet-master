@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,10 +20,11 @@ import (
 
 	"go.ligato.io/cn-infra/v2/logging"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/scheme"
+
+	//"k8s.io/client-go/kubernetes/scheme"
 	k8s_rest "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/remotecommand"
+	//"k8s.io/client-go/tools/remotecommand"
 )
 
 const (
@@ -156,17 +158,6 @@ func (p *Plugin) Close() error {
 	return nil
 }
 
-func (p *Plugin) Get_Node_Number() error {
-	nodes, err := p.ClientSet.CoreV1().Nodes().List(metav1.ListOptions{})
-	if err != nil {
-		p.Log.Errorln("failed to get nodes infomation")
-		panic(err)
-	}
-
-	p.AssignedWorkerNumber = len(nodes.Items)
-	return nil
-}
-
 func homeDir() string {
 	if h := os.Getenv("HOME"); h != "" { // linux
 		return h
@@ -231,37 +222,40 @@ func (p *Plugin) Make_Topology(message rpctest.Message) error {
 	return nil
 }
 
-func (p *Plugin) Create_Deployment(message rpctest.Message) []string {
-	pod_names := make([]string, 0)
-	//workers := make(map[string]string)
-	num := 0
+func (p *Plugin) AffinityClusterPartition(message rpctest.Message) map[string]uint {
+	workers := make(map[uint]string, 0)
 	nodes, err := p.ClientSet.CoreV1().Nodes().List(metav1.ListOptions{})
 	if err != nil {
 		p.Log.Errorln("failed to get nodes infomation")
 		panic(err)
 	}
 
-	worker_assignment := affinity.AffinityClusterPartition(message, uint(len(nodes.Items))-1)
+	worker_assignment := affinity.AffinityClusterPartition(message, uint(len(nodes.Items))-1) // -1 for master node
 	p.Log.Infoln("the assignment is:", worker_assignment)
 
-	for _, pod := range message.Command.EmunetCreation.Emunet.Pods {
+	for _, hostid := range worker_assignment {
+		workers[hostid] = ""
+	}
+	p.AssignedWorkerNumber = len(workers)
+	p.Log.Infoln("len of workers is", len(workers))
+	return worker_assignment
+}
+
+func (p *Plugin) Create_Deployment(assignment map[string]uint) {
+	for podname, hostid := range assignment {
 		// key step to create pod
-		deployment := make_deployment(pod.Name, worker_assignment[pod.Name])
+		deployment := make_deployment(podname, hostid)
 
 		if _, err := p.ClientSet.AppsV1().Deployments(p.K8sNamespace).Create(&deployment); err != nil {
-			p.Log.Errorln("failed to create deployment:", pod.Name)
+			p.Log.Errorln("failed to create deployment:", podname)
 			panic(err)
 		} else {
-			p.Log.Infoln("successfully created deployment", pod.Name)
+			p.Log.Infoln("successfully created deployment", podname)
 		}
-		num++
 	}
-
-	return pod_names
 }
 
 func (p *Plugin) watch_pod_status() {
-	workers := make(map[string]string)
 	for {
 		p.PodList.Lock.Lock()
 		temp_pods, err := p.ClientSet.CoreV1().Pods(p.K8sNamespace).List(metav1.ListOptions{})
@@ -270,9 +264,6 @@ func (p *Plugin) watch_pod_status() {
 			panic(err)
 		}
 		for _, pod := range temp_pods.Items {
-			if valid_ip(pod.Status.HostIP) {
-				workers[pod.Status.HostIP] = ""
-			}
 			simplified_name := Parse_pod_name(pod.Name)
 			if _, ok := p.PodList.List[simplified_name]; ok {
 				p.PodList.List[simplified_name].Pod = pod
@@ -300,108 +291,59 @@ func (p *Plugin) watch_pod_status() {
 		delete(p.PodList.List, "")
 		//p.Log.Infoln("the length of podlist is", len(p.PodList.List))
 		p.PodList.Lock.Unlock()
-		p.AssignedWorkerNumber = len(workers)
 		time.Sleep(POD_STATUS_WATCH_INTERVAL)
 	}
 }
 
 func (p *Plugin) Pod_Tap_Config(pod coreV1.Pod) error {
-	p.Log.Infoln("configuring tap interface for pod", pod.Name)
+	var stderr bytes.Buffer
+	simplified_name := Parse_pod_name(pod.Name)
+	p.Log.Infoln("configuring tap interface for pod", simplified_name)
 	cp := strings.Split(pod.Status.PodIP, ".") // conrol plane ip
 	data_plane_ip := "10.1." + cp[2] + "." + cp[3] + "/16"
 	cmd :=
 		`ip route add 10.1.0.0/16 dev tap0
 ip addr add dev tap0 `
 
-	req := p.ClientSet.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(pod.Name).
-		Namespace(p.K8sNamespace).
-		SubResource("exec").
-		VersionedParams(&coreV1.PodExecOptions{
-			Command: []string{"/bin/bash", "-c", cmd + data_plane_ip},
-			Stdin:   true,
-			Stdout:  true,
-			Stderr:  true,
-			TTY:     false,
-		}, scheme.ParameterCodec)
-
-	executor, err := remotecommand.NewSPDYExecutor(p.KubeConfig, "POST", req.URL())
+	create_cmd := exec.Command("kubectl", "exec", pod.Name, "--", "/bin/bash", "-c", cmd+data_plane_ip)
+	create_cmd.Stderr = &stderr
+	err := create_cmd.Run()
 	if err != nil {
-		panic(err)
+		if !strings.Contains(stderr.String(), "File exists") {
+			p.Log.Warningln(err.Error(), stderr.String(), ", for pod", simplified_name)
+			return err
+		}
 	}
-	var stdout, stderr bytes.Buffer
-	if err = executor.Stream(remotecommand.StreamOptions{
-		Stdin:  strings.NewReader(""),
-		Stdout: &stdout,
-		Stderr: &stderr,
-	}); err != nil {
-		p.Log.Warningln(err, ", retrying")
-		return err
-	}
-	// get cmd output
-	//ret := map[string]string{"stdout": stdout.String(), "stderr": stderr.String(), "pod_name": pod.Name}
-	//p.Log.Infoln(ret)
 	p.Log.Infoln("config tap interface for pod", pod.Name, "finished")
 
 	return nil
 }
 
 func (p *Plugin) Pod_tap_create(pod coreV1.Pod) error {
-	p.Log.Infoln("creating tap interface for pod", pod.Name)
-	req1 := p.ClientSet.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(pod.Name).
-		Namespace(p.K8sNamespace).
-		SubResource("exec").
-		VersionedParams(&coreV1.PodExecOptions{
-			Command: []string{"vppctl", "-s", ":5002", "create", "tap"},
-			Stdin:   true,
-			Stdout:  true,
-			Stderr:  true,
-			TTY:     false,
-		}, scheme.ParameterCodec)
-
-	executor1, err := remotecommand.NewSPDYExecutor(p.KubeConfig, "POST", req1.URL())
+	var stderr bytes.Buffer
+	simplified_name := Parse_pod_name(pod.Name)
+	p.Log.Infoln("creating tap interface for pod", simplified_name)
+	create_cmd := exec.Command("kubectl", "exec", pod.Name, "--", "vppctl", "-s", ":5002", "create", "tap")
+	create_cmd.Stderr = &stderr
+	err := create_cmd.Run()
 	if err != nil {
-		panic(err)
-	}
-	var stdout, stderr bytes.Buffer
-	if err = executor1.Stream(remotecommand.StreamOptions{
-		Stdin:  strings.NewReader(""),
-		Stdout: &stdout,
-		Stderr: &stderr,
-	}); err != nil {
-		p.Log.Warningln(err)
+		p.Log.Warningln(err.Error(), stderr.String(), ", for pod", simplified_name)
+		return err
+	} else {
+		p.Log.Infoln("created tap interface for pod", simplified_name)
 	}
 
-	req2 := p.ClientSet.CoreV1().RESTClient().Post().
-		Resource("pods").
-		Name(pod.Name).
-		Namespace(p.K8sNamespace).
-		SubResource("exec").
-		VersionedParams(&coreV1.PodExecOptions{
-			Command: []string{"vppctl", "-s", ":5002", "set", "int", "state", "tap0", "up"},
-			Stdin:   true,
-			Stdout:  true,
-			Stderr:  true,
-			TTY:     false,
-		}, scheme.ParameterCodec)
-
-	executor2, err := remotecommand.NewSPDYExecutor(p.KubeConfig, "POST", req2.URL())
+	config_cmd := exec.Command("kubectl", "exec", pod.Name, "--", "vppctl", "-s", ":5002", "set", "int", "state", "tap0", "up")
+	config_cmd.Stderr = &stderr
+	_, err = config_cmd.Output()
 	if err != nil {
-		panic(err)
+		p.Log.Warningln(err.Error(), stderr.String(), ", for pod", simplified_name)
+		return err
+	} else {
+		p.Log.Infoln("set interface state up for pod", simplified_name)
 	}
 
-	if err = executor2.Stream(remotecommand.StreamOptions{
-		Stdin:  strings.NewReader(""),
-		Stdout: &stdout,
-		Stderr: &stderr,
-	}); err != nil {
-		p.Log.Infoln(err)
-	}
-
-	p.Log.Infoln("creation tap interface for pod", pod.Name, "finished")
+	p.Log.Infoln("creation tap interface for pod", simplified_name, "finished")
 
 	return nil
 }
@@ -463,19 +405,25 @@ func make_deployment(name string, worker_id uint) appsv1.Deployment {
 					Containers: []coreV1.Container{
 						{
 							Name:            "vpp-agent",
-							Image:           "ligato/vpp-agent:latest",
+							Image:           "ligato/vpp-agent:v3.2.0",
 							ImagePullPolicy: coreV1.PullPolicy("IfNotPresent"),
 							SecurityContext: &coreV1.SecurityContext{
 								Privileged: &privileged,
 							},
 							Env: []coreV1.EnvVar{
 								{
-									Name:  "ETCD_CONFIG",
+									Name: "ETCD_CONFIG",
+									// uncomment the next line to usr etcd
 									Value: "/etc/etcd/etcd.conf",
+									//Value: "/etc/etcd/etcdtest.conf",
 								},
 								{
 									Name:  "MICROSERVICE_LABEL",
 									Value: "mocknet-pod-" + name,
+								},
+								{
+									Name:  "GOVPP_CONFIG",
+									Value: "/etc/vpp-agent/vpp-agent.conf",
 								},
 								{
 									Name: "HOST_IP",
@@ -499,6 +447,10 @@ func make_deployment(name string, worker_id uint) appsv1.Deployment {
 									Name:      "etcvpp",
 									MountPath: "/etc/vpp",
 								},
+								{
+									Name:      "vpp-agent-cfg",
+									MountPath: "/etc/vpp-agent",
+								},
 							},
 						},
 					},
@@ -508,6 +460,14 @@ func make_deployment(name string, worker_id uint) appsv1.Deployment {
 							VolumeSource: coreV1.VolumeSource{
 								HostPath: &coreV1.HostPathVolumeSource{
 									Path: "/opt/etcd",
+								},
+							},
+						},
+						{
+							Name: "vpp-agent-cfg",
+							VolumeSource: coreV1.VolumeSource{
+								HostPath: &coreV1.HostPathVolumeSource{
+									Path: "/opt/vpp-agent",
 								},
 							},
 						},
@@ -543,6 +503,7 @@ func (p *Plugin) Assign_VTEP() map[string]string {
 	}
 
 	// 10.2.0.X/24 as vtep ip address
+	// 192.168.0.X/24 as 40GB/s interface ip
 	vtep_count := 1
 	for _, node := range Nodes.Items {
 		name := node.Name
@@ -553,6 +514,8 @@ func (p *Plugin) Assign_VTEP() map[string]string {
 				break
 			}
 		}
+		node_ip_parse := strings.Split(node_ip, ".")
+		node_ip = "192.168.1." + node_ip_parse[3]
 
 		vtep_ip := VTEP_PREFIX + strconv.Itoa(vtep_count)
 		key := "/mocknet/nodeinfo/" + name

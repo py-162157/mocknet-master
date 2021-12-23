@@ -171,7 +171,8 @@ func (p *Plugin) Send_Pod_Info(mocknet_pod *kubernetes.MocknetPod) error {
 	value = value + "podip:" + data_plane_ip + ","
 	value = value + "hostip:" + mocknet_pod.Pod.Status.HostIP + ","
 	value = value + "hostname:" + p.Kubernetes.Nodeinfos[mocknet_pod.Pod.Status.HostIP].Name + ","
-	value = value + "restartcount:" + strconv.Itoa(int(mocknet_pod.RestartCount))
+	value = value + "restartcount:" + strconv.Itoa(int(mocknet_pod.RestartCount)) + ","
+	value = value + "containerid:" + strings.Split(mocknet_pod.Pod.Status.ContainerStatuses[0].ContainerID, "//")[1]
 
 	p.PodToHost.List[name] = p.Kubernetes.Nodeinfos[mocknet_pod.Pod.Status.HostIP].Name
 
@@ -266,4 +267,13 @@ func (p *Plugin) Inform_Tap_Config_Finished(podname string) error {
 	p.EtcdClient.Put(context.Background(), "/mocknet/PodTapConfigFinished-"+podname, podname)
 	p.Log.Infoln("informed pod", podname, "that its tap interface has been configured")
 	return nil
+}
+
+func (p *Plugin) Directory_Create(assignment map[string]uint) {
+	for podname, hostid := range assignment {
+		key := "/mocknet/assignment/" + podname
+		value := "pod:" + podname + "," + "hostid:" + "worker" + strconv.Itoa(int(hostid))
+		p.EtcdClient.Put(context.Background(), key, value)
+	}
+	p.wait_for_response("DirectoryCreationFinished")
 }

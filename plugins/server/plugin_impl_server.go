@@ -52,7 +52,6 @@ func (p *Plugin) Init() error {
 	p.probe_etcd_plugins()
 	p.probe_kubernetes_plugins()
 
-	p.Kubernetes.Get_Node_Number()
 	go p.start_server()
 
 	return nil
@@ -87,8 +86,10 @@ func (p *Plugin) start_server() {
 				p.Log.Infoln("The message's type is 'emunet_creation'")
 				p.Log.Infoln("Start to create pods")
 				go p.watch_pod_creation_finished()
+				assignment := p.Kubernetes.AffinityClusterPartition(message)
+				p.ETCD.Directory_Create(assignment)
 				p.Kubernetes.Make_Topology(message)
-				p.Kubernetes.Create_Deployment(message)
+				p.Kubernetes.Create_Deployment(assignment)
 				p.ETCD.Commit_Create_Info(message)
 				//p.Kubernetes.Pod_Tap_Config_All()
 				go p.watch_tap_recreation(context.Background())
@@ -170,9 +171,9 @@ func (p *Plugin) Set_Pod(pod_name string, podlist map[string]*kubernetes.Mocknet
 		if p.Kubernetes.Is_Creation_Completed(pod_name) {
 			break
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(1 * time.Second)
 	}
-	if string([]byte(pod_name)[:1]) != "s" {
+	/*if string([]byte(pod_name)[:1]) != "s" {
 		p.Log.Infoln("setting for pod", pod_name, "finished")
 		p.Kubernetes.Pod_tap_create(mocknet_pod.Pod)
 		count := 1
@@ -182,7 +183,9 @@ func (p *Plugin) Set_Pod(pod_name string, podlist map[string]*kubernetes.Mocknet
 			} else {
 				break
 			}
-			p.Log.Warningln("config for pod", pod_name, "failed, retry times", count)
+			if count == 1 {
+				p.Log.Warningln("config for pod", pod_name, "failed, retrying")
+			}
 			count += 1
 			if count >= POD_CONFIG_RETRY_TIMES {
 				p.Log.Warningln("config for pod", pod_name, "failed and over max retry times, remark it as unhandled")
@@ -194,9 +197,10 @@ func (p *Plugin) Set_Pod(pod_name string, podlist map[string]*kubernetes.Mocknet
 			}
 			time.Sleep(2 * time.Second)
 		}
-	}
+	}*/
 
 	if flag {
+		p.Log.Infoln("--------------- pod", pod_name, "config finished ---------------")
 		p.ETCD.Send_Pod_Info(mocknet_pod)
 	}
 }

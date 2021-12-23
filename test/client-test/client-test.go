@@ -33,13 +33,20 @@ func main() {
 		panic(err.Error())
 	}
 	namespace := "default"
-	pods, err := clientset.CoreV1().Pods(namespace).List(metav1.ListOptions{})
-	for _, pod := range pods.Items {
-		fmt.Println(pod.Status.ContainerStatuses[0].RestartCount)
+	deployment := make_deployment(1)
+	if _, err := clientset.AppsV1().Deployments(namespace).Create(&deployment); err != nil {
+		fmt.Println("failed to create deployment:")
+		panic(err)
+	} else {
+		fmt.Println("successfully created deployment")
 	}
+	/*pods, err := clientset.CoreV1().Pods(namespace).List(metav1.ListOptions{})
+	for _, pod := range pods.Items {
+		fmt.Println(pod.Status.ContainerStatuses[0].ContainerID)
+	}*/
 	/*req := clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
-		Name("mocknet-h1s2-7d7ddd7b97-kcrh5").
+		Name("mocknet-h2-6575ff7f7c-rrwf7").
 		Namespace(namespace).
 		SubResource("exec").
 		VersionedParams(&coreV1.PodExecOptions{
@@ -126,39 +133,28 @@ func make_deployment(replica int32) appsv1.Deployment {
 					Labels: map[string]string{
 						"app": "mocknet",
 					},
-					Annotations: map[string]string{
-						"contivpp.io/custom-if":          "memif1/memif/stub, memif2/memif/stub, memif3/memif/stub, memif4/memif/stub, memif5/memif/stub",
-						"contivpp.io/microservice-label": "mocknet",
-					},
 				},
 				Spec: coreV1.PodSpec{
 					NodeSelector: map[string]string{
-						"kubernetes.io/hostname": "worker2",
+						"kubernetes.io/hostname": "worker1",
 					},
 					RestartPolicy: coreV1.RestartPolicy("Always"),
 					Containers: []coreV1.Container{
 						{
 							Name:  "vpp-agent",
-							Image: "ligato/vpp-agent:latest",
+							Image: "ligato/vpp-base:21.06",
 							SecurityContext: &coreV1.SecurityContext{
 								Privileged: &privilege,
 							},
 							ImagePullPolicy: coreV1.PullPolicy("IfNotPresent"),
-							Env: []coreV1.EnvVar{
-								{
-									Name:  "ETCD_CONFIG",
-									Value: "/etc/etcd/etcd.conf",
-								},
-								{
-									Name:  "MICROSERVICE_LABEL",
-									Value: "mocknet",
-								},
-							},
 							VolumeMounts: []coreV1.VolumeMount{
 								{
 									Name:      "etcvpp",
 									MountPath: "/etc/vpp",
 								},
+							},
+							Command: []string{
+								"ping", "192.168.67.119",
 							},
 						},
 					},
