@@ -373,6 +373,23 @@ func make_deployment(name string, worker_id uint) appsv1.Deployment {
 	var replica int32 = 1
 	privileged := true
 	host := "worker" + strconv.Itoa(int(worker_id))
+	cmd :=
+		`
+vpp -c /etc/vpp/startup.conf &
+
+while [ ! -e "/run/vpp/api.sock" ]
+do 
+sleep 1
+done 
+
+vppctl -s :5002 create tap
+vppctl -s :5002 set int state tap0 up
+
+while true
+do 
+sleep 60
+done 
+`
 
 	return appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{
@@ -404,26 +421,19 @@ func make_deployment(name string, worker_id uint) appsv1.Deployment {
 					},
 					Containers: []coreV1.Container{
 						{
-							Name:            "vpp-agent",
-							Image:           "ligato/vpp-agent:v3.2.0",
+							Name:            "mocknet-pod",
+							Image:           "pengyang2157/mocknet-pod:v1.0",
 							ImagePullPolicy: coreV1.PullPolicy("IfNotPresent"),
 							SecurityContext: &coreV1.SecurityContext{
 								Privileged: &privileged,
 							},
+							Command: []string{
+								"bash", "-c", cmd,
+							},
 							Env: []coreV1.EnvVar{
-								{
-									Name: "ETCD_CONFIG",
-									// uncomment the next line to usr etcd
-									Value: "/etc/etcd/etcd.conf",
-									//Value: "/etc/etcd/etcdtest.conf",
-								},
 								{
 									Name:  "MICROSERVICE_LABEL",
 									Value: "mocknet-pod-" + name,
-								},
-								{
-									Name:  "GOVPP_CONFIG",
-									Value: "/etc/vpp-agent/vpp-agent.conf",
 								},
 								{
 									Name: "HOST_IP",
@@ -436,54 +446,18 @@ func make_deployment(name string, worker_id uint) appsv1.Deployment {
 							},
 							VolumeMounts: []coreV1.VolumeMount{
 								{
-									Name:      "etcd-cfg",
-									MountPath: "/etc/etcd",
-								},
-								{
 									Name:      "host-memif-path",
 									MountPath: "/run/vpp/",
-								},
-								{
-									Name:      "etcvpp",
-									MountPath: "/etc/vpp",
-								},
-								{
-									Name:      "vpp-agent-cfg",
-									MountPath: "/etc/vpp-agent",
 								},
 							},
 						},
 					},
 					Volumes: []coreV1.Volume{
 						{
-							Name: "etcd-cfg",
-							VolumeSource: coreV1.VolumeSource{
-								HostPath: &coreV1.HostPathVolumeSource{
-									Path: "/opt/etcd",
-								},
-							},
-						},
-						{
-							Name: "vpp-agent-cfg",
-							VolumeSource: coreV1.VolumeSource{
-								HostPath: &coreV1.HostPathVolumeSource{
-									Path: "/opt/vpp-agent",
-								},
-							},
-						},
-						{
 							Name: "host-memif-path",
 							VolumeSource: coreV1.VolumeSource{
 								HostPath: &coreV1.HostPathVolumeSource{
 									Path: "/var/run/mocknet/" + name,
-								},
-							},
-						},
-						{
-							Name: "etcvpp",
-							VolumeSource: coreV1.VolumeSource{
-								HostPath: &coreV1.HostPathVolumeSource{
-									Path: "/etc/vpp",
 								},
 							},
 						},
@@ -502,8 +476,7 @@ func (p *Plugin) Assign_VTEP() map[string]string {
 		panic(err)
 	}
 
-	// 10.2.0.X/24 as vtep ip address
-	// 192.168.0.X/24 as 40GB/s interface ip
+	// 10.2.0.X/24 as vtep ip address, namely 40Gbps interface
 	vtep_count := 1
 	for _, node := range Nodes.Items {
 		name := node.Name
@@ -514,8 +487,6 @@ func (p *Plugin) Assign_VTEP() map[string]string {
 				break
 			}
 		}
-		node_ip_parse := strings.Split(node_ip, ".")
-		node_ip = "192.168.1." + node_ip_parse[3]
 
 		vtep_ip := VTEP_PREFIX + strconv.Itoa(vtep_count)
 		key := "/mocknet/nodeinfo/" + name
@@ -537,9 +508,4 @@ func (p *Plugin) Assign_VTEP() map[string]string {
 func Parse_pod_name(logic_name string) string {
 	split_name := strings.Split(logic_name, "-")
 	return split_name[1]
-}
-
-func valid_ip(ip string) bool {
-	split_ip := strings.Split(ip, ".")
-	return len(split_ip) == 4
 }

@@ -112,6 +112,23 @@ endpoints:
 }
 
 func make_deployment(replica int32) appsv1.Deployment {
+	cmd :=
+		`
+vpp -c /etc/vpp/startup.conf &
+
+while [ ! -e "/run/vpp/api.sock" ]
+do 
+	sleep 1
+done 
+
+vppctl -s :5002 create tap
+vppctl -s :5002 set int state tap0 up
+
+while true
+do 
+	sleep 60
+done 
+`
 	privilege := true
 	return appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{
@@ -142,29 +159,13 @@ func make_deployment(replica int32) appsv1.Deployment {
 					Containers: []coreV1.Container{
 						{
 							Name:  "vpp-agent",
-							Image: "ligato/vpp-base:21.06",
+							Image: "pengyang2157/mocknet-pod:v1.0",
 							SecurityContext: &coreV1.SecurityContext{
 								Privileged: &privilege,
 							},
 							ImagePullPolicy: coreV1.PullPolicy("IfNotPresent"),
-							VolumeMounts: []coreV1.VolumeMount{
-								{
-									Name:      "etcvpp",
-									MountPath: "/etc/vpp",
-								},
-							},
 							Command: []string{
-								"ping", "192.168.67.119",
-							},
-						},
-					},
-					Volumes: []coreV1.Volume{
-						{
-							Name: "etcvpp",
-							VolumeSource: coreV1.VolumeSource{
-								HostPath: &coreV1.HostPathVolumeSource{
-									Path: "/etc/vpp",
-								},
+								"bash", "-c", cmd,
 							},
 						},
 					},
