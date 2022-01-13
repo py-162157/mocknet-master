@@ -53,12 +53,20 @@ type Deps struct {
 	// key: interface id in mininet(podname-intfid), value: hostname
 	IntfToHost map[string]string
 	// key: node_ip
-	Nodeinfos              map[string]Nodeinfo
-	AssignedWorkerNumber   int
-	PodList                MocknetPodSync
-	PluginInitFinished     bool
-	Pod_name_reflector     map[string]string // key: completed name, value: simplified name
-	Pod_name_reflector_rev map[string]string // key: simplified name, value: completed name
+	Nodeinfos                  map[string]Nodeinfo
+	AssignedWorkerNumber       int
+	PodList                    MocknetPodSync
+	PluginInitFinished         bool
+	Pod_name_reflector         map[string]string      // key: completed name, value: simplified name
+	Pod_name_reflector_rev     map[string]string      // key: simplified name, value: completed name
+	WorkerThreadCoreAssignment map[int]*WorkerThreads // key: worker-name, value: present core to be allocated
+	MainThreadCoreAssignment   map[int]int            // key: worker-name, value: present core to be allocated
+}
+
+type WorkerThreads struct {
+	start       int
+	end         int
+	core_string string
 }
 
 type MocknetPodSync struct {
@@ -114,6 +122,8 @@ func (p *Plugin) Init() error {
 	}
 	p.Pod_name_reflector = make(map[string]string)
 	p.Pod_name_reflector_rev = make(map[string]string)
+	p.WorkerThreadCoreAssignment = make(map[int]*WorkerThreads)
+	p.MainThreadCoreAssignment = make(map[int]int)
 
 	// get current kubeconfig
 	var kubeconfig *string
@@ -230,6 +240,23 @@ func (p *Plugin) AffinityClusterPartition(message rpctest.Message) map[string]ui
 		panic(err)
 	}
 
+	for i := 1; i <= len(nodes.Items)-1; i++ {
+		// uncomment these to assign single core to a pod
+		p.WorkerThreadCoreAssignment[i] = &WorkerThreads{
+			start: 0,
+			end:   0,
+		}
+
+		// uncomment these to assign multiple core to a pod
+
+		p.WorkerThreadCoreAssignment[i] = &WorkerThreads{
+			start: 0,
+			end:   2,
+		}
+
+		p.MainThreadCoreAssignment[i] = 0
+	}
+
 	worker_assignment := affinity.AffinityClusterPartition(message, uint(len(nodes.Items))-1) // -1 for master node
 	p.Log.Infoln("the assignment is:", worker_assignment)
 
@@ -243,14 +270,43 @@ func (p *Plugin) AffinityClusterPartition(message rpctest.Message) map[string]ui
 
 func (p *Plugin) Create_Deployment(assignment map[string]uint) {
 	for podname, hostid := range assignment {
+		// assign core to pod-side vpp
+
+		// uncomment these to assign simgle core to a pod
+		/*
+			start := p.WorkerThreadCoreAssignment[int(hostid)].start
+			p.WorkerThreadCoreAssignment[int(hostid)].core_string = strconv.Itoa(start)
+			p.WorkerThreadCoreAssignment[int(hostid)].start = (start + 1) % 21
+		*/
+
+		// uncomment these to assign multiple core to a pod
+		// use core 11-31 as pod worker thread cpus, 3 cores are allocated to every pod-vpp
+
+		start := p.WorkerThreadCoreAssignment[int(hostid)].start
+		end := p.WorkerThreadCoreAssignment[int(hostid)].end
+		if start < end {
+			p.WorkerThreadCoreAssignment[int(hostid)].core_string = strconv.Itoa(start+11) + "-" + strconv.Itoa(end+11)
+		} else {
+			list1 := strconv.Itoa(11) + "-" + strconv.Itoa(start+11)
+			list2 := strconv.Itoa(end+11) + "-" + strconv.Itoa(31)
+			p.WorkerThreadCoreAssignment[int(hostid)].core_string = list1 + "," + list2
+		}
+
+		p.WorkerThreadCoreAssignment[int(hostid)].start = (start + 3) % 21
+		p.WorkerThreadCoreAssignment[int(hostid)].end = (end + 3) % 21
+
+		// use core 32-36 as pod worker thread cpus
+		main_core_id := 32 + p.MainThreadCoreAssignment[int(hostid)]%5
+		p.MainThreadCoreAssignment[int(hostid)] += 1
+
 		// key step to create pod
-		deployment := make_deployment(podname, hostid)
+		deployment := make_deployment(podname, hostid, p.WorkerThreadCoreAssignment[int(hostid)].core_string, main_core_id)
 
 		if _, err := p.ClientSet.AppsV1().Deployments(p.K8sNamespace).Create(&deployment); err != nil {
 			p.Log.Errorln("failed to create deployment:", podname)
 			panic(err)
 		} else {
-			p.Log.Infoln("successfully created deployment", podname)
+			p.Log.Infoln("created deployment", podname)
 		}
 	}
 }
@@ -319,35 +375,6 @@ ip addr add dev tap0 `
 	return nil
 }
 
-func (p *Plugin) Pod_tap_create(pod coreV1.Pod) error {
-	var stderr bytes.Buffer
-	simplified_name := Parse_pod_name(pod.Name)
-	p.Log.Infoln("creating tap interface for pod", simplified_name)
-	create_cmd := exec.Command("kubectl", "exec", pod.Name, "--", "vppctl", "-s", ":5002", "create", "tap")
-	create_cmd.Stderr = &stderr
-	err := create_cmd.Run()
-	if err != nil {
-		p.Log.Warningln(err.Error(), stderr.String(), ", for pod", simplified_name)
-		return err
-	} else {
-		p.Log.Infoln("created tap interface for pod", simplified_name)
-	}
-
-	config_cmd := exec.Command("kubectl", "exec", pod.Name, "--", "vppctl", "-s", ":5002", "set", "int", "state", "tap0", "up")
-	config_cmd.Stderr = &stderr
-	_, err = config_cmd.Output()
-	if err != nil {
-		p.Log.Warningln(err.Error(), stderr.String(), ", for pod", simplified_name)
-		return err
-	} else {
-		p.Log.Infoln("set interface state up for pod", simplified_name)
-	}
-
-	p.Log.Infoln("creation tap interface for pod", simplified_name, "finished")
-
-	return nil
-}
-
 func (p *Plugin) Is_Creation_Completed(pod_name string) bool {
 	p.PodList.Lock.Lock()
 	defer p.PodList.Lock.Unlock()
@@ -355,9 +382,14 @@ func (p *Plugin) Is_Creation_Completed(pod_name string) bool {
 		//p.Log.Infoln("pod", pod_name, "don't exist in podlist")
 		return false
 	} else {
-		if mocknet_pod.Pod.Status.Phase != "Running" {
-			//p.Log.Infoln("pod", pod_name, "don't in 'running' phase")
-			//p.Log.Infoln(mocknet_pod.Pod.Status.Phase)
+		//p.Log.Infoln(mocknet_pod.Pod.Status.Conditions)
+		flag := false
+		for _, condition := range mocknet_pod.Pod.Status.Conditions {
+			if condition.Type == coreV1.PodConditionType("Ready") && condition.Status == coreV1.ConditionTrue {
+				flag = true
+			}
+		}
+		if !flag {
 			return false
 		}
 		split_ip := strings.Split(mocknet_pod.Pod.Status.PodIP, ".")
@@ -369,21 +401,21 @@ func (p *Plugin) Is_Creation_Completed(pod_name string) bool {
 	return true
 }
 
-func make_deployment(name string, worker_id uint) appsv1.Deployment {
+func make_deployment(name string, worker_id uint, worker_core_id string, main_core_id int) appsv1.Deployment {
 	var replica int32 = 1
 	privileged := true
 	host := "worker" + strconv.Itoa(int(worker_id))
 	cmd :=
-		`
+		`sed -i "44c main-core ${MAIN_CORE_ASSGIENMENT}" /etc/vpp/startup.conf
+sed -i "47c corelist-workers ${WORKER_CORE_ASSGIENMENT}" /etc/vpp/startup.conf
+mkdir /run/vpp
 vpp -c /etc/vpp/startup.conf &
 
 while [ ! -e "/run/vpp/api.sock" ]
 do 
-sleep 1
+	sleep 1
+	echo "api.sock hasn't been created, waitting"
 done 
-
-vppctl -s :5002 create tap
-vppctl -s :5002 set int state tap0 up
 
 while true
 do 
@@ -422,10 +454,21 @@ done
 					Containers: []coreV1.Container{
 						{
 							Name:            "mocknet-pod",
-							Image:           "pengyang2157/mocknet-pod:v1.0",
+							Image:           "pengyang2157/mocknet-pod:v1.5",
 							ImagePullPolicy: coreV1.PullPolicy("IfNotPresent"),
 							SecurityContext: &coreV1.SecurityContext{
 								Privileged: &privileged,
+							},
+							ReadinessProbe: &coreV1.Probe{
+								Handler: coreV1.Handler{
+									Exec: &coreV1.ExecAction{
+										Command: []string{
+											"/home/probe",
+										},
+									},
+								},
+								PeriodSeconds:       1,
+								InitialDelaySeconds: 5,
 							},
 							Command: []string{
 								"bash", "-c", cmd,
@@ -442,6 +485,14 @@ done
 											FieldPath: "status.hostIP",
 										},
 									},
+								},
+								{
+									Name:  "WORKER_CORE_ASSGIENMENT",
+									Value: worker_core_id,
+								},
+								{
+									Name:  "MAIN_CORE_ASSGIENMENT",
+									Value: strconv.Itoa(main_core_id),
 								},
 							},
 							VolumeMounts: []coreV1.VolumeMount{

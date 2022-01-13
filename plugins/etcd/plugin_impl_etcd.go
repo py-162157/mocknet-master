@@ -94,9 +94,6 @@ func (p *Plugin) Commit_Create_Info(message rpctest.Message) error {
 
 	ctx := context.Background()
 	kvc := clientv3.NewKV(p.EtcdClient)
-	txn := kvc.Txn(ctx)
-
-	ops := []clientv3.Op{}
 
 	for _, link := range links {
 		node1 := link.Node1.Name
@@ -119,19 +116,14 @@ func (p *Plugin) Commit_Create_Info(message rpctest.Message) error {
 		value = value + "vni:" + strconv.Itoa(p.InfToVni[link.Node1.Name+"-"+link.Node1Inf])
 		//p.Log.Infoln("key =", "/mocknet/link/"+link.Name, "value =", value)
 
-		ops = append(ops, clientv3.OpPut("/mocknet/link/"+link.Name, value))
+		_, err := kvc.Put(ctx, "/mocknet/link/"+link.Name, value)
+
+		if err != nil {
+			p.Log.Errorln(err)
+			panic(err)
+		}
 	}
-
-	txn.Then(ops...)
-
-	_, err := txn.Commit()
-	if err != nil {
-		p.Log.Errorln(err)
-		panic(err)
-	} else {
-		p.Log.Infoln("successfully commit link data to master etcd")
-	}
-
+	p.Log.Infoln("successfully commit link data to master etcd")
 	p.wait_for_response("ParseTopologyInfo")
 
 	return nil

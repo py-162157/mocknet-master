@@ -364,7 +364,7 @@ func print_edges(edges []Edge) {
 	}
 }
 
-func make_cluster(epsilon float32, edges []Edge, threshold uint, FragmentProcess bool, CommonNeighborCluster bool) Affinity {
+func make_cluster(edges []Edge, threshold uint, FragmentProcess bool, CommonNeighborCluster bool) Affinity {
 	v_set := make(map[element]element)
 	for _, e := range edges {
 		v_set[e.start] = e.start
@@ -397,18 +397,15 @@ func get_hash_edges(edges []Edge) map[HashEdge]uint {
 	return hash_edges
 }
 
-func find_commen_neighbors(edges []Edge, switch_weight uint) []Edge {
+func find_commen_neighbors(edges []Edge) []Edge {
 	neighbors_of_vertex := make(map[element][]element)
 	edges_of_common_neighbors := make(map[HashEdge]uint)
 	new_edges := make([]Edge, 0)
 	for _, e := range edges {
 		neighbors_of_vertex[e.start] = append(neighbors_of_vertex[e.start], e.end)
 	}
-	for vertex, neighbors := range neighbors_of_vertex {
+	for _, neighbors := range neighbors_of_vertex {
 		edge_weight := 1
-		if string([]byte(vertex.name)[:1]) == "s" {
-			edge_weight = 5
-		}
 		for _, vertex1 := range neighbors {
 			for _, vertex2 := range neighbors {
 				if vertex1 != vertex2 {
@@ -869,33 +866,31 @@ func make_random_graph(vertex uint) []Edge {
 func Random_mock(scale uint, partition_number uint, rank_swap bool, threshold uint) {
 	edges := make_random_graph(scale)
 	hash_edges := get_hash_edges(edges)
-	new_edges := find_commen_neighbors(edges, 5)
-	af := make_cluster(0.4, new_edges, threshold, true, true)
+	new_edges := find_commen_neighbors(edges)
+	af := make_cluster(new_edges, threshold, true, true)
 	line_after_swap := Combination(af, partition_number, uint(math.Sqrt(float64(scale/partition_number))), rank_swap)
 
 	DynamicProgram(line_after_swap, partition_number, hash_edges)
 }
 
-func generate_edges(message rpctest.Message, switch_weight uint) ([]Edge, uint) {
+func generate_edges(message rpctest.Message) ([]Edge, uint) {
 	topo := message.Command.EmunetCreation.Emunet
 	edges := make([]Edge, 0)
+
+	node_weights := make(map[string]uint)
 	for _, edge := range topo.Links {
-		start_weight := uint(1)
-		end_weight := uint(1)
-		if string([]byte(edge.Node1.Name)[:1]) == "s" {
-			start_weight = switch_weight
-		}
-		if string([]byte(edge.Node2.Name)[:1]) == "s" {
-			end_weight = switch_weight
-		}
+		node_weights[edge.Node1.Name] += 1
+	}
+
+	for _, edge := range topo.Links {
 		edges = append(edges, Edge{
 			start: element(Node{
 				name:   edge.Node1.Name,
-				weight: start_weight,
+				weight: node_weights[edge.Node1.Name],
 			}),
 			end: element(Node{
 				name:   edge.Node2.Name,
-				weight: end_weight,
+				weight: node_weights[edge.Node2.Name],
 			}),
 		})
 	}
@@ -903,12 +898,12 @@ func generate_edges(message rpctest.Message, switch_weight uint) ([]Edge, uint) 
 }
 
 func AffinityClusterPartition(message rpctest.Message, partition_number uint) map[string]uint {
-	edges, scale := generate_edges(message, 10)
+	edges, scale := generate_edges(message)
 	hash_edges := get_hash_edges(edges)
-	new_edges := find_commen_neighbors(edges, 5)
+	new_edges := find_commen_neighbors(edges)
 	//log.Println("new edges are:", new_edges)
 	threshold := scale / partition_number
-	af := make_cluster(0.4, new_edges, threshold, true, true)
+	af := make_cluster(new_edges, threshold, true, true)
 	//af.print_all_clusters()
 	line_after_swap := Combination(af, partition_number, uint(math.Sqrt(float64(scale/partition_number))), true)
 	log.Print("line after swap is:", line_after_swap)

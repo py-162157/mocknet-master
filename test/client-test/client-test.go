@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	coreV1 "k8s.io/api/core/v1"
@@ -40,10 +41,16 @@ func main() {
 	} else {
 		fmt.Println("successfully created deployment")
 	}
-	/*pods, err := clientset.CoreV1().Pods(namespace).List(metav1.ListOptions{})
-	for _, pod := range pods.Items {
-		fmt.Println(pod.Status.ContainerStatuses[0].ContainerID)
-	}*/
+	for {
+		pods, _ := clientset.CoreV1().Pods(namespace).List(metav1.ListOptions{})
+		for _, pod := range pods.Items {
+			fmt.Println("")
+			fmt.Println(len(pod.Status.Conditions))
+			fmt.Println(pod.Status.Conditions)
+			fmt.Println("")
+		}
+		time.Sleep(time.Second * 1)
+	}
 	/*req := clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name("mocknet-h2-6575ff7f7c-rrwf7").
@@ -113,20 +120,20 @@ endpoints:
 
 func make_deployment(replica int32) appsv1.Deployment {
 	cmd :=
-		`
+		`sed -i "44c main-core ${CORE_ASSGIENMENT}" /etc/vpp/startup.conf
+sed -i "47c corelist-workers ${CORE_ASSGIENMENT}" /etc/vpp/startup.conf
+mkdir /run/vpp
 vpp -c /etc/vpp/startup.conf &
 
 while [ ! -e "/run/vpp/api.sock" ]
 do 
 	sleep 1
+	echo "api.sock hasn't been created, waitting"
 done 
-
-vppctl -s :5002 create tap
-vppctl -s :5002 set int state tap0 up
 
 while true
 do 
-	sleep 60
+sleep 60
 done 
 `
 	privilege := true
@@ -136,7 +143,7 @@ done
 			APIVersion: "v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "mocknet-deployment",
+			Name: "mocknet-test",
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replica,
@@ -158,10 +165,27 @@ done
 					RestartPolicy: coreV1.RestartPolicy("Always"),
 					Containers: []coreV1.Container{
 						{
-							Name:  "vpp-agent",
-							Image: "pengyang2157/mocknet-pod:v1.0",
+							Name:  "mocknet-test",
+							Image: "pengyang2157/mocknet-pod:v1.5",
 							SecurityContext: &coreV1.SecurityContext{
 								Privileged: &privilege,
+							},
+							ReadinessProbe: &coreV1.Probe{
+								Handler: coreV1.Handler{
+									Exec: &coreV1.ExecAction{
+										Command: []string{
+											"/home/api-probe",
+										},
+									},
+								},
+								PeriodSeconds:       2,
+								InitialDelaySeconds: 5,
+							},
+							Env: []coreV1.EnvVar{
+								{
+									Name:  "WORKER_CORE_ASSGIENMENT",
+									Value: "11",
+								},
 							},
 							ImagePullPolicy: coreV1.PullPolicy("IfNotPresent"),
 							Command: []string{

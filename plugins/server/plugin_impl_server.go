@@ -85,16 +85,14 @@ func (p *Plugin) start_server() {
 				p.Log.Infoln("Server receive a message")
 				p.Log.Infoln("The message's type is 'emunet_creation'")
 				p.Log.Infoln("Start to create pods")
+				//p.Kubernetes.AffinityClusterPartition(message)
 				go p.watch_pod_creation_finished()
 				assignment := p.Kubernetes.AffinityClusterPartition(message)
 				p.ETCD.Directory_Create(assignment)
 				p.Kubernetes.Make_Topology(message)
-				p.Kubernetes.Create_Deployment(assignment)
 				p.ETCD.Commit_Create_Info(message)
-				//p.Kubernetes.Pod_Tap_Config_All()
+				p.Kubernetes.Create_Deployment(assignment)
 				go p.watch_tap_recreation(context.Background())
-				//p.Pod_name_reflector, p.Pod_name_reflector_rev = p.ETCD.Send_Pods_Info()
-				//p.ETCD.Send_Ready(creation_count)
 			}
 		}
 	}()
@@ -163,7 +161,7 @@ func (p *Plugin) watch_pod_creation_finished() {
 }
 
 func (p *Plugin) Set_Pod(pod_name string, podlist map[string]*kubernetes.MocknetPod) {
-	p.Log.Infoln("setting for pod", pod_name)
+	//p.Log.Infoln("setting for pod", pod_name)
 	// flag indicate whether the loop is broken for success or times over
 	flag := true
 	mocknet_pod := podlist[pod_name]
@@ -200,7 +198,7 @@ func (p *Plugin) Set_Pod(pod_name string, podlist map[string]*kubernetes.Mocknet
 	}*/
 
 	if flag {
-		p.Log.Infoln("--------------- pod", pod_name, "config finished ---------------")
+		p.Log.Infoln("--------------- pod", pod_name, "is ready ---------------")
 		p.ETCD.Send_Pod_Info(mocknet_pod)
 	}
 }
