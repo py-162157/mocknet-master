@@ -1,10 +1,13 @@
 package affinity
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
+	"reflect"
 	"sort"
 	"strconv"
+	"time"
 
 	"log"
 	"mocknet/plugins/server/rpctest"
@@ -430,7 +433,7 @@ func find_commen_neighbors(edges []Edge) []Edge {
 	return new_edges
 }
 
-func makeRange(min, max int) []uint {
+func makerange(min, max int) []uint {
 	a := make([]uint, max-min)
 	for i := range a {
 		a[i] = uint(min) + uint(i)
@@ -442,18 +445,18 @@ func RankSwap(line []element, k uint, r uint, q []uint) []element {
 	log.Println("begin to rank swap, k=", k, "r=", r, "q=", q)
 	divided_line := make([][][]element, 0)
 	cut_size := make([]uint, 0)
-	for _, i := range makeRange(0, len(q)-1) {
+	for _, i := range makerange(0, len(q)-1) {
 		partition_size := 0
 		partition := make([][]element, 0)
 		interval_index := make([]uint, 0)
-		for _, j := range makeRange(0, int(r+1)) {
+		for _, j := range makerange(0, int(r+1)) {
 			interval_index = append(interval_index,
 				q[i]+uint(math.Floor(float64((j*(q[i+1]-q[i])))/float64(r))),
 			)
 		}
-		for _, j := range makeRange(0, int(r)) {
+		for _, j := range makerange(0, int(r)) {
 			interval := make([]element, 0)
-			for _, k := range makeRange(int(interval_index[j]), int(interval_index[j+1])) {
+			for _, k := range makerange(int(interval_index[j]), int(interval_index[j+1])) {
 				interval = append(interval, line[k])
 				partition_size += int(line[k].weight)
 			}
@@ -468,7 +471,7 @@ func RankSwap(line []element, k uint, r uint, q []uint) []element {
 	log.Println("Begin to optimize the cut size")
 
 	hash_pair := make(map[uint]uint)
-	for _, j := range makeRange(0, int(r)) {
+	for _, j := range makerange(0, int(r)) {
 		for {
 			random_pair := rand.Intn(int(r))
 			if _, ok := hash_pair[uint(random_pair)]; !ok {
@@ -481,10 +484,10 @@ func RankSwap(line []element, k uint, r uint, q []uint) []element {
 
 	cut_size_copy := cut_size
 	partition_size_rank := make([]uint, 0)
-	for _, _ = range makeRange(0, int(k)) {
+	for _, _ = range makerange(0, int(k)) {
 		max := 0
 		max_position := 0
-		for _, j := range makeRange(0, int(k)) {
+		for _, j := range makerange(0, int(k)) {
 			if int(cut_size_copy[j]) > max {
 				max = int(cut_size_copy[j])
 				max_position = int(j)
@@ -494,7 +497,7 @@ func RankSwap(line []element, k uint, r uint, q []uint) []element {
 		cut_size_copy[max_position] = 0
 	}
 	partition_pairs := make(map[uint]uint)
-	for _, i := range makeRange(0, int(k/2)) {
+	for _, i := range makerange(0, int(k/2)) {
 		partition_pairs[partition_size_rank[i]] = partition_size_rank[k-i-1]
 	}
 
@@ -505,10 +508,10 @@ func RankSwap(line []element, k uint, r uint, q []uint) []element {
 		flag := 0
 		for partition1, partition2 := range partition_pairs {
 			for interval1, interval2 := range hash_pair {
-				for _, j := range makeRange(0, len(divided_line[partition1][interval1])) {
+				for _, j := range makerange(0, len(divided_line[partition1][interval1])) {
 					best_pair := -1
 					present_small_max_size := math.Max(float64(cut_size[partition1]), float64(cut_size[partition2]))
-					for _, k := range makeRange(0, len(divided_line[partition2][interval2])) {
+					for _, k := range makerange(0, len(divided_line[partition2][interval2])) {
 						imaginaty_max_size := math.Max(
 							float64(cut_size[partition1]-divided_line[partition1][interval1][j].weight+divided_line[partition2][interval2][k].weight),
 							float64(cut_size[partition2]-divided_line[partition2][interval2][k].weight+divided_line[partition1][interval1][j].weight),
@@ -600,17 +603,25 @@ func q_list(k uint) []uint {
 
 func Array2(line1, line2 uint) [][]uint {
 	array := make([][]uint, 0)
-	for _, _ = range makeRange(0, int(line1)) {
+	for _, _ = range makerange(0, int(line1)) {
 		array = append(array, make([]uint, line2))
+	}
+	return array
+}
+
+func Array2Float(line1, line2 uint) [][]float64 {
+	array := make([][]float64, 0)
+	for _, _ = range makerange(0, int(line1)) {
+		array = append(array, make([]float64, line2))
 	}
 	return array
 }
 
 func Array3(line1, line2, line3 uint) [][][]uint {
 	array := make([][][]uint, 0)
-	for _, _ = range makeRange(0, int(line1)) {
+	for _, _ = range makerange(0, int(line1)) {
 		array1 := make([][]uint, 0)
-		for _, _ = range makeRange(0, int(line2)) {
+		for _, _ = range makerange(0, int(line2)) {
 			array1 = append(array1, make([]uint, line3))
 		}
 		array = append(array, array1)
@@ -618,21 +629,37 @@ func Array3(line1, line2, line3 uint) [][][]uint {
 	return array
 }
 
-func ApArray3(line1, line2, line3 uint) [][][]PartitionResult {
-	array := make([][][]PartitionResult, 0)
-	for _, _ = range makeRange(0, int(line1)) {
-		array1 := make([][]PartitionResult, 0)
-		for _, _ = range makeRange(0, int(line2)) {
-			array1 = append(array1, make([]PartitionResult, line3))
+type cost struct {
+	edges_weight_cut_off uint
+	max_cluster_weight   uint
+	min_cluster_weight   uint
+	variance             float64
+	cluster_weight_mean  float64
+	cut_points           PartitionResult
+}
+
+func Array3Cost(line1, line2, line3 uint) [][][]cost {
+	array := make([][][]cost, 0)
+	for _, _ = range makerange(0, int(line1)) {
+		array1 := make([][]cost, 0)
+		for _, _ = range makerange(0, int(line2)) {
+			array1 = append(array1, make([]cost, line3))
 		}
 		array = append(array, array1)
 	}
 	return array
 }
 
-func DynamicProgram(line []element, k uint, edges map[HashEdge]uint) map[string]uint {
+func DynamicProgram(line []element, k uint, edges map[HashEdge]uint, alpha float64, origin_edges []Edge) map[string]uint {
+	if alpha < 0 || alpha > 1 {
+		panic("The weight coefficient must be [0, 1]!")
+	}
+	fmt.Println("             ")
+	fmt.Println("             ")
+	fmt.Println("             ")
+	fmt.Println("alpha =", alpha)
 	node_position := make(map[element]uint)
-	for _, i := range makeRange(0, len(line)) {
+	for _, i := range makerange(0, len(line)) {
 		node_position[line[i]] = i
 	}
 
@@ -640,161 +667,309 @@ func DynamicProgram(line []element, k uint, edges map[HashEdge]uint) map[string]
 	total_node_weight := 0
 	total_edge_weight := 0
 
+	// Table J：三维矩阵(𝑣𝑛 × 𝑣𝑛 ×𝑣𝑛) ，𝐽(𝑖,𝑗,𝑘) 存储了一端位于区间(𝑖,𝑗)中的点，另一端连接至点k的所有边权总和，其计算公式为：
+	// J(i, j, k) = J(i, j-1, k) + J(j, j, k)
 	J := Array3(uint(vertex_num), uint(vertex_num), uint(vertex_num))
-	for _, i := range makeRange(0, vertex_num) {
+	for _, i := range makerange(0, vertex_num) {
 		total_node_weight += int(line[i].weight)
 	}
-	for hashedge, weight := range edges {
-		start := hashedge.start
-		end := hashedge.end
-		total_edge_weight += int(weight)
-		J[node_position[start]][node_position[start]][node_position[end]] = 1
+	for _, edge := range origin_edges {
+		start := edge.start
+		end := edge.end
+		total_edge_weight += int(edge.weight)
+		// 当i, j之间有edge时, 初始化J(i, i, j)为weight
+		J[node_position[start]][node_position[start]][node_position[end]] = edge.weight
 	}
-	for _, length := range makeRange(2, vertex_num) {
-		for _, i := range makeRange(0, vertex_num-int(length)) {
+	for _, length := range makerange(2, vertex_num) {
+		for _, i := range makerange(0, vertex_num-int(length)) {
 			j := i + length - 1
-			for _, k := range makeRange(int(i+length), vertex_num) {
+			for _, k := range makerange(int(i+length), vertex_num) {
 				J[i][j][k] = J[i][j-1][k] + J[j][j][k]
 			}
 		}
 	}
 	log.Println("table J has been completed")
 
-	D := Array2(uint(vertex_num), uint(vertex_num))
-	for _, i := range makeRange(0, vertex_num-1) {
-		for _, j := range makeRange(int(i+1), vertex_num) {
+	// 二维矩阵(𝑣𝑛 × 𝑣𝑛) ，D(𝑖,𝑗) 存储了两端均在区间(𝑖,𝑗)的所有边权总和，其计算公式为:
+	// D(i, j+1) = D(i, j) + J(i, j, j+1)
+	/*D := Array2(uint(vertex_num), uint(vertex_num))
+	for _, i := range makerange(0, vertex_num-1) {
+		for _, j := range makerange(int(i+1), vertex_num) {
 			D[i][j] = D[i][j-1] + J[i][j-1][j]
 		}
-	}
+	}*/
 	log.Println("table D has been completed")
 
+	// 二维矩阵(𝑣𝑛 × 𝑣𝑛) ，B(𝑖,𝑗) 存储了区间(𝑖,𝑗)内的所有点权总和，其计算公式为：
+	// B(i, j+1) = B(i, j) + W(j+1)
 	B := Array2(uint(vertex_num), uint(vertex_num))
-	for _, i := range makeRange(0, vertex_num) {
+	for _, i := range makerange(0, vertex_num) {
 		B[i][i] = line[i].weight
 	}
-	for _, i := range makeRange(0, vertex_num-1) {
-		for _, j := range makeRange(int(i+1), vertex_num) {
+	for _, i := range makerange(0, vertex_num-1) {
+		for _, j := range makerange(int(i+1), vertex_num) {
 			B[i][j] = B[i][j-1] + line[j].weight
 		}
 	}
 	log.Println("table B has been completed")
 
+	// 二维矩阵E, 存储了从(i, j)区间的均值
+	E := Array2Float(uint(vertex_num), uint(vertex_num))
+	for _, i := range makerange(0, vertex_num) {
+		E[i][i] = float64(line[i].weight)
+	}
+	for _, i := range makerange(0, vertex_num-1) {
+		for _, j := range makerange(int(i+1), vertex_num) {
+			E[i][j] = (E[i][j-1]*float64(j-i) + float64(line[j].weight)) / float64(j-i+1)
+		}
+	}
+	log.Println("table E has been completed")
+
+	// 二维矩阵V, 存储了从(i, j)区间的方差
+	V := Array2Float(uint(vertex_num), uint(vertex_num))
+	for _, i := range makerange(0, vertex_num-1) {
+		for _, j := range makerange(int(i+1), vertex_num) {
+			V[i][j] = ((V[i][j-1]+math.Pow(E[i][j-1], 2))*float64(j-1)+float64(line[j].weight))/float64(j-i+1) - math.Pow(E[i][j], 2)
+		}
+	}
+	log.Println("table V has been completed")
+
+	// 三维矩阵(𝑣𝑛 × 𝑣𝑛 ×𝑣𝑛) ，C(𝑖, 𝑗, k) 存储了一端位于区间(𝑖,𝑘)，另一端位于区间(𝑘,𝑗)内的所有边权总和，其计算公式为：
+	// C(i, j, k) = C(i, j-1, k) + J(i, k, j)
 	C := Array3(uint(vertex_num), uint(vertex_num), uint(vertex_num))
-	for _, i := range makeRange(0, vertex_num-1) {
+	for _, i := range makerange(0, vertex_num-1) {
 		C[i][i+1][i] = J[i][i][i+1]
 	}
-	for _, i := range makeRange(0, vertex_num-2) {
-		for _, j := range makeRange(int(i+2), vertex_num) {
-			for _, cut_point := range makeRange(int(i), int(j)) {
+	for _, i := range makerange(0, vertex_num-2) {
+		for _, j := range makerange(int(i+2), vertex_num) {
+			for _, cut_point := range makerange(int(i), int(j)) {
 				C[i][j][cut_point] = C[i][j-1][cut_point] + J[i][cut_point][j]
 			}
 		}
 	}
 	log.Println("table C has been completed")
 
-	A := Array3(uint(vertex_num), uint(vertex_num), k+1)
-	Ap := ApArray3(uint(vertex_num), uint(vertex_num), k+1)
+	// A(i, j, k)存储了将子问题[i, j]分割为k部分的最优解的切断边权总和，最大cluster和最小cluster
+	// Ap(i, j, k)存储了将子问题[i, j]分割为k部分的最优解的切割位置
+
+	// type cost struct {
+	// 	   edges_weight_cut_off uint
+	// 	   max_cluster_weight   uint
+	// 	   min_cluster_weight   uint
+	// }
+	A := Array3Cost(uint(vertex_num), uint(vertex_num), k+1)
 	log.Println("The average weight of cluster is:", float32(total_node_weight+total_edge_weight)/float32(k))
 
-	for _, i := range makeRange(0, vertex_num) {
-		for _, j := range makeRange(int(i), vertex_num) {
-			A[i][j][1] = B[i][j] + D[i][j] + C[0][j][i] + C[i][vertex_num-1][j]
+	/*for _, i := range makerange(0, vertex_num) {
+		for _, j := range makerange(0, vertex_num) {
+			for _, k := range makerange(0, vertex_num) {
+				fmt.Println("J(", i, ",", j, ",", k, ") =", J[i][j][k])
+			}
 		}
 	}
+
+	for _, i := range makerange(0, vertex_num) {
+		for _, j := range makerange(0, vertex_num) {
+			for _, k := range makerange(0, vertex_num) {
+				fmt.Println("C(", i, ",", j, ",", k, ") =", C[i][j][k])
+			}
+		}
+	}*/
+
+	for _, i := range makerange(0, vertex_num) {
+		for _, j := range makerange(int(i), vertex_num) {
+			//A[i][j][1] = B[i][j] + D[i][j] + C[0][j][i] + C[i][vertex_num-1][j]
+			A[i][j][1] = cost{
+				edges_weight_cut_off: 0,
+				max_cluster_weight:   B[i][j],
+				min_cluster_weight:   B[i][j],
+				variance:             0,
+				cluster_weight_mean:  float64(B[i][j]),
+
+				//max_cluster_weight:   B[i][j] + D[i][j],
+				//min_cluster_weight:   B[i][j] + D[i][j],
+			}
+		}
+		A[i][i][1].cut_points = []uint{}
+	}
 	log.Println("dynamic programing started")
+
+	max_edge_weight := uint(0)
+	for _, weight := range edges {
+		if weight > uint(max_edge_weight) {
+			max_edge_weight = weight
+		}
+	}
+
 	qs := q_list(k)
 	qs = qs[1:]
 	for _, q := range qs {
 		println("now running in q = ", q)
 		left := q / 2
 		right := q - left
-		for _, i := range makeRange(0, vertex_num-1) {
-			for _, j := range makeRange(int(i+1), vertex_num) {
+		for _, i := range makerange(0, vertex_num-1) {
+			for _, j := range makerange(int(i+1), vertex_num) {
 				if q <= j-i+1 {
 					min_cut_point := i
-					min_cut_size := 10000000
-					for _, cut_point := range makeRange(int(i), int(j)) {
-						if cut_point-i+1 >= left && j-cut_point+1 >= right {
-							cut_size_temp := int(math.Max(float64(A[i][cut_point][left]), float64(A[cut_point+1][j][right])))
-							if cut_size_temp < min_cut_size {
-								min_cut_size = cut_size_temp
-								min_cut_point = cut_point
+					min_cost := float64(100)
+
+					added_edges_weight := uint(0)
+					for _, cut_point := range makerange(int(i), int(j)) {
+						if cut_point-i+1 >= left && j-cut_point >= right {
+							Aleft := A[i][cut_point][left]
+							Aright := A[cut_point+1][j][right]
+							// A(i, j, q) = Min{ A(i, k, q/2) , A(k+1, j, q-q/2) }
+
+							// 1. 在该点切割所产生的最大cluster = max(左子问题的最大cluster, 右子问题的最大cluster)
+							//max_cluster_weight := math.Max(float64(Aleft.max_cluster_weight), float64(Aright.max_cluster_weight))
+							// 2. 在该点切割所产生的最小cluster = min(左子问题的最小cluster, 右子问题的最小cluster)
+							//min_cluster_weight := math.Min(float64(Aleft.min_cluster_weight), float64(Aright.min_cluster_weight))
+
+							left_cluster_num := float64((len(Aleft.cut_points) + 1))
+							right_cluster_num := float64((len(Aright.cut_points) + 1))
+							present_cluster_weight_mean := (Aleft.cluster_weight_mean*left_cluster_num + Aright.cluster_weight_mean*right_cluster_num) / (left_cluster_num + right_cluster_num)
+
+							/*// 被切一刀后新增的并不是C[i][j][cut_point]
+							left_border := uint(0)
+							right_border := uint(0)
+							if left == 1 {
+								left_border = i
+							} else {
+								left_border = A[i][cut_point][left].cut_points[len(A[i][cut_point][left].cut_points)-1]
 							}
+
+							if right == 1 {
+								right_border = j
+							} else {
+								right_border = A[cut_point+1][j][right].cut_points[0]
+							}*/
+
+							// 3. 在该点切割所切断的edge weight总和 = 左子问题的edge weight + 右子问题的edge weight + 新产生的cost
+							edge_weight_cut_off := Aleft.edges_weight_cut_off + Aright.edges_weight_cut_off + C[i][j][cut_point]
+							M := math.Sqrt(float64(edge_weight_cut_off) / float64((k-1)*uint(vertex_num)*max_edge_weight))
+							// 左右子问题总方差 = 组内方差 + 组间方差
+							total_variance := (float64(len(Aleft.cut_points)+1)*(Aleft.variance+math.Pow(Aleft.cluster_weight_mean, 2))+float64(len(Aright.cut_points)+1)*(Aright.variance+math.Pow(Aright.cluster_weight_mean, 2)))/(left_cluster_num+right_cluster_num) - math.Pow(present_cluster_weight_mean, 2)
+							N := math.Sqrt(math.Sqrt(total_variance) / present_cluster_weight_mean)
+							current_cost := alpha*M + (1-alpha)*N
+							if current_cost < min_cost {
+								min_cost = current_cost
+								min_cut_point = cut_point
+								added_edges_weight = C[i][j][cut_point]
+							}
+
+							/*if i == 0 && j == uint(vertex_num)-1 && q == k {
+								fmt.Println("alpha =", alpha, ", M =", M, ", N =", N, ", COST =", current_cost)
+							}*/
 						}
 					}
-					A[i][j][q] = uint(min_cut_size)
-					Ap[i][j][q] = Ap[i][min_cut_point][left]
-					Ap[i][j][q] = append(Ap[i][j][q], min_cut_point)
-					right_part := Ap[min_cut_point+1][j][right]
-					Ap[i][j][q] = append(Ap[i][j][q], right_part...)
+					Aleft := A[i][min_cut_point][left]
+					Aright := A[min_cut_point+1][j][right]
+					A[i][j][q].edges_weight_cut_off = Aleft.edges_weight_cut_off + Aright.edges_weight_cut_off + added_edges_weight
+					A[i][j][q].max_cluster_weight = uint(math.Max(float64(Aleft.max_cluster_weight), float64(Aright.max_cluster_weight)))
+					A[i][j][q].min_cluster_weight = uint(math.Min(float64(Aleft.min_cluster_weight), float64(Aright.min_cluster_weight)))
+					left_cluster_num := float64((len(Aleft.cut_points) + 1))
+					right_cluster_num := float64((len(Aright.cut_points) + 1))
+					A[i][j][q].cluster_weight_mean = (Aleft.cluster_weight_mean*left_cluster_num + Aright.cluster_weight_mean*right_cluster_num) / (left_cluster_num + right_cluster_num)
+					A[i][j][q].variance = (float64(len(Aleft.cut_points)+1)*(Aleft.variance+math.Pow(Aleft.cluster_weight_mean, 2))+float64(len(Aright.cut_points)+1)*(Aright.variance+math.Pow(Aright.cluster_weight_mean, 2)))/(left_cluster_num+right_cluster_num) - math.Pow(A[i][j][q].cluster_weight_mean, 2)
+					A[i][j][q].cut_points = A[i][min_cut_point][left].cut_points
+					A[i][j][q].cut_points = append(A[i][j][q].cut_points, min_cut_point)
+					right_part := A[min_cut_point+1][j][right].cut_points
+					A[i][j][q].cut_points = append(A[i][j][q].cut_points, right_part...)
+					if i == 0 && j == uint(vertex_num)-1 && q == k {
+						log.Println("debug! The C is: ", C[i][j][min_cut_point], "cost is: ", added_edges_weight)
+					}
 				}
 			}
 		}
 	}
 	log.Println("dynamic programing finished!")
-	log.Println("These cut point is: ", Ap[0][vertex_num-1][k])
+	log.Println("These cut point is: ", A[0][vertex_num-1][k].cut_points)
+	log.Println("The A is: ", A[0][vertex_num-1][k])
 
 	cluster_size := make([]uint, 0)
 	cut_index := make([]uint, 0)
 	cut_index = append(cut_index, 0)
-	cut_index = append(cut_index, Ap[0][vertex_num-1][k]...)
+	cut_index = append(cut_index, A[0][vertex_num-1][k].cut_points...)
 	cut_index = append(cut_index, uint(vertex_num)-1)
 	log.Println("The cut_index is: ", cut_index)
 
-	max_cluster_size := 0
 	worker_index := 1
 	worker_assign := make(map[string]uint)
-	for _, i := range makeRange(0, len(cut_index)-1) {
+	for _, i := range makerange(0, len(cut_index)-1) {
+		present_cluster_size := uint(0)
 		if i == 0 {
-			for _, j := range makeRange(int(cut_index[i]), int(cut_index[i+1]+1)) {
+			for _, j := range makerange(int(cut_index[i]), int(cut_index[i+1]+1)) {
 				worker_assign[line[j].name] = uint(worker_index)
 			}
 		} else {
-			for _, j := range makeRange(int(cut_index[i]+1), int(cut_index[i+1]+1)) {
+			for _, j := range makerange(int(cut_index[i]+1), int(cut_index[i+1]+1)) {
 				worker_assign[line[j].name] = uint(worker_index)
 			}
 		}
 
 		worker_index += 1
 
-		present_cluster_size := uint(0)
-		if i == 0 {
+		/*if i == 0 {
 			present_cluster_size += C[0][vertex_num-1][cut_index[1]]
 		} else if i == uint(len(cut_index)-2) {
 			present_cluster_size += C[0][vertex_num-1][cut_index[i]]
 		} else {
 			present_cluster_size += C[0][cut_index[i+1]][cut_index[i]]
 			present_cluster_size += C[cut_index[i]][vertex_num-1][cut_index[i+1]]
+		}*/
+		//present_cluster_size += D[cut_index[i]][cut_index[i+1]]
+		if i == 0 {
+			present_cluster_size += B[0][cut_index[1]]
+		} else {
+			present_cluster_size += B[cut_index[i]+1][cut_index[i+1]]
 		}
-		present_cluster_size += D[cut_index[i]][cut_index[i+1]]
-		present_cluster_size += B[cut_index[i]][cut_index[i+1]]
-		cluster_size = append(cluster_size, present_cluster_size)
-		if present_cluster_size > uint(max_cluster_size) {
-			max_cluster_size = int(present_cluster_size)
+		if present_cluster_size != 0 {
+			cluster_size = append(cluster_size, present_cluster_size)
+		}
+	}
+
+	edge_weight_cut_off := 0
+	for _, edge := range origin_edges {
+		if worker_assign[edge.start.name] != worker_assign[edge.end.name] {
+			edge_weight_cut_off += int(edge.weight)
+			//fmt.Println("start: ", worker_assign[edge.start.name], "end:", worker_assign[edge.end.name], "weight =", edge.weight)
 		}
 	}
 
 	mean := float64(0)
 	variance := float64(0)
-	for _, i := range makeRange(0, len(cluster_size)) {
+	for _, i := range makerange(0, len(cluster_size)) {
 		mean += float64(cluster_size[i]) / float64(len(cluster_size))
-		variance += math.Pow(float64(cluster_size[i])-float64(mean), 2)
+	}
+	for _, i := range makerange(0, len(cluster_size)) {
+		variance += math.Pow(float64(cluster_size[i])-mean, 2)
 	}
 	variance /= float64(len(cluster_size))
 	standard_deviation := math.Sqrt(variance)
 	coefficient_of_variation := standard_deviation / mean
-	log.Println("The cut sizes is:", cluster_size)
-	log.Println("The mean cut size is:", mean)
-	log.Println("The max cut size is:", max_cluster_size)
+	max_size := A[0][vertex_num-1][k].max_cluster_weight
+	min_size := A[0][vertex_num-1][k].min_cluster_weight
+	log.Println("The sizes is:", cluster_size)
+	log.Println("The mean size is:", mean)
+	log.Println("The max size is:", max_size)
+	log.Println("The min size is:", min_size)
+	log.Println("These edges cut off are:", A[0][vertex_num-1][k].edges_weight_cut_off)
+	log.Println("These edges cut off new are:", edge_weight_cut_off/2)
 	log.Println("The coefficient of variance is:", coefficient_of_variation)
+	log.Println("The coefficient of variance new is:", math.Sqrt(A[0][vertex_num-1][k].variance)/mean)
+	fmt.Println("             ")
+	fmt.Println("             ")
+	fmt.Println("             ")
+	//N := float64(max_size-min_size) / float64(max_size)
 	return worker_assign
+	//return edge_weight_cut_off / 2, N
 }
 
 func Combination(af Affinity, partition_number uint, interval_len uint, rank_swap bool) []element {
 	q := make([]uint, 0)
 	line := af.linear_embed()
 	log.Println(line)
-	for _, i := range makeRange(0, int(partition_number)+1) {
+	for _, i := range makerange(0, int(partition_number)+1) {
 		q = append(q, uint(math.Floor(float64(i*uint(len(line)))/float64(partition_number))))
 	}
 	if rank_swap {
@@ -810,7 +985,7 @@ func make_random_graph(vertex uint) []Edge {
 	j := 0
 	edges := make([]Edge, 0)
 	random_weight := make([]uint, 0)
-	for _, _ = range makeRange(0, int(vertex)) {
+	for _, _ = range makerange(0, int(vertex)) {
 		r_w := rand.Intn(5) + 1
 		random_weight = append(random_weight, uint(r_w))
 	}
@@ -863,7 +1038,7 @@ func make_random_graph(vertex uint) []Edge {
 	return edges
 }
 
-func Random_mock(scale uint, partition_number uint, rank_swap bool, threshold uint) {
+/*func Random_mock(scale uint, partition_number uint, rank_swap bool, threshold uint) {
 	edges := make_random_graph(scale)
 	hash_edges := get_hash_edges(edges)
 	new_edges := find_commen_neighbors(edges)
@@ -871,7 +1046,7 @@ func Random_mock(scale uint, partition_number uint, rank_swap bool, threshold ui
 	line_after_swap := Combination(af, partition_number, uint(math.Sqrt(float64(scale/partition_number))), rank_swap)
 
 	DynamicProgram(line_after_swap, partition_number, hash_edges)
-}
+}*/
 
 func generate_edges(message rpctest.Message) ([]Edge, uint) {
 	topo := message.Command.EmunetCreation.Emunet
@@ -897,7 +1072,412 @@ func generate_edges(message rpctest.Message) ([]Edge, uint) {
 	return edges, uint(len(topo.Pods))
 }
 
-func AffinityClusterPartition(message rpctest.Message, partition_number uint) map[string]uint {
+func RandSlice(slice interface{}) { //切片乱序
+	rv := reflect.ValueOf(slice)
+	if rv.Type().Kind() != reflect.Slice {
+		return
+	}
+
+	length := rv.Len()
+	if length < 2 {
+		return
+	}
+
+	swap := reflect.Swapper(slice)
+	rand.Seed(time.Now().Unix())
+	for i := length - 1; i >= 0; i-- {
+		j := rand.Intn(length)
+		swap(i, j)
+	}
+	return
+}
+
+func Random_partition(edges []Edge, line []element, partition_number uint, hash_edges map[HashEdge]uint) (int, float64) {
+	RandSlice(line)
+
+	q := make([]uint, 0)
+	//log.Println(line)
+	for _, i := range makerange(0, int(partition_number)+1) {
+		q = append(q, uint(math.Floor(float64(i*uint(len(line)))/float64(partition_number))))
+	}
+	if q[len(q)-1] > uint(len(line)-1) {
+		q[len(q)-1] = uint(len(line) - 1)
+	}
+	//fmt.Println("The mean cut point is: ", q)
+
+	node_position := make(map[element]uint)
+	for _, i := range makerange(0, len(line)) {
+		node_position[line[i]] = i
+	}
+
+	vertex_num := len(line)
+	total_node_weight := 0
+	total_edge_weight := 0
+
+	J := Array3(uint(vertex_num), uint(vertex_num), uint(vertex_num))
+	for _, i := range makerange(0, vertex_num) {
+		total_node_weight += int(line[i].weight)
+	}
+	for hashedge, weight := range hash_edges {
+		start := hashedge.start
+		end := hashedge.end
+		total_edge_weight += int(weight)
+		J[node_position[start]][node_position[start]][node_position[end]] = 1
+	}
+	for _, length := range makerange(2, vertex_num) {
+		for _, i := range makerange(0, vertex_num-int(length)) {
+			j := i + length - 1
+			for _, k := range makerange(int(i+length), vertex_num) {
+				J[i][j][k] = J[i][j-1][k] + J[j][j][k]
+			}
+		}
+	}
+
+	/*D := Array2(uint(vertex_num), uint(vertex_num))
+	for _, i := range makerange(0, vertex_num-1) {
+		for _, j := range makerange(int(i+1), vertex_num) {
+			D[i][j] = D[i][j-1] + J[i][j-1][j]
+		}
+	}*/
+
+	B := Array2(uint(vertex_num), uint(vertex_num))
+	for _, i := range makerange(0, vertex_num) {
+		B[i][i] = line[i].weight
+	}
+	for _, i := range makerange(0, vertex_num-1) {
+		for _, j := range makerange(int(i+1), vertex_num) {
+			B[i][j] = B[i][j-1] + line[j].weight
+		}
+	}
+
+	C := Array3(uint(vertex_num), uint(vertex_num), uint(vertex_num))
+	for _, i := range makerange(0, vertex_num-1) {
+		C[i][i+1][i] = J[i][i][i+1]
+	}
+	for _, i := range makerange(0, vertex_num-2) {
+		for _, j := range makerange(int(i+2), vertex_num) {
+			for _, cut_point := range makerange(int(i), int(j)) {
+				C[i][j][cut_point] = C[i][j-1][cut_point] + J[i][cut_point][j]
+			}
+		}
+	}
+
+	worker_index := 1
+	worker_assign := make(map[string]uint)
+	cluster_size := make([]uint, 0)
+	max_cluster_size := 0
+	min_cluster_size := math.MaxInt
+	for _, i := range makerange(0, len(q)-1) {
+		if i == 0 {
+			for _, j := range makerange(int(q[i]), int(q[i+1]+1)) {
+				worker_assign[line[j].name] = uint(worker_index)
+			}
+		} else {
+			for _, j := range makerange(int(q[i]+1), int(q[i+1]+1)) {
+				worker_assign[line[j].name] = uint(worker_index)
+			}
+		}
+
+		worker_index += 1
+
+		present_cluster_size := uint(0)
+		if i == 0 {
+			present_cluster_size += C[0][vertex_num-1][q[1]]
+		} else if i == uint(len(q)-2) {
+			present_cluster_size += C[0][vertex_num-1][q[i]]
+		} else {
+			present_cluster_size += C[0][q[i+1]][q[i]]
+			present_cluster_size += C[q[i]][vertex_num-1][q[i+1]]
+		}
+		//present_cluster_size += D[q[i]][q[i+1]]
+		present_cluster_size += B[q[i]][q[i+1]]
+		cluster_size = append(cluster_size, present_cluster_size)
+		if present_cluster_size > uint(max_cluster_size) {
+			max_cluster_size = int(present_cluster_size)
+		}
+
+		if present_cluster_size < uint(min_cluster_size) {
+			min_cluster_size = int(present_cluster_size)
+		}
+	}
+
+	edge_weight_cut_off := 0
+	for _, edge := range edges {
+		if worker_assign[edge.start.name] != worker_assign[edge.end.name] {
+			edge_weight_cut_off += int(edge.weight)
+		}
+	}
+
+	mean := float64(0)
+	variance := float64(0)
+	for _, i := range makerange(0, len(cluster_size)) {
+		mean += float64(cluster_size[i]) / float64(len(cluster_size))
+	}
+	for _, i := range makerange(0, len(cluster_size)) {
+		variance += math.Pow(float64(cluster_size[i])-mean, 2)
+	}
+	variance /= float64(len(cluster_size))
+	standard_deviation := math.Sqrt(variance)
+	coefficient_of_variation := standard_deviation / mean
+	/*log.Println("The sizes is:", cluster_size)
+	log.Println("The mean size is:", mean)
+	log.Println("The max size is:", max_cluster_size)
+	log.Println("The min size is:", min_cluster_size)
+	log.Println("These edges cut off are:", edge_weight_cut_off/2)
+	log.Println("The coefficient of variance is:", coefficient_of_variation)*/
+	//N := float64(max_cluster_size-min_cluster_size) / float64(max_cluster_size)
+
+	return edge_weight_cut_off / 2, coefficient_of_variation
+	//return edge_weight_cut_off / 2, N
+}
+
+func Generate_Tree_Topo(m int, n int) ([]Edge, []element, uint) {
+	nodes := make([]element, 0)
+	edges := make([]Edge, 0)
+	cut_point := (1 - int(math.Pow(float64(n), float64(m)))) / (1 - n)      // 最后一个switch节点的序号，从1开始
+	total_number := (1 - int(math.Pow(float64(n), float64(m+1)))) / (1 - n) // 总节点数
+	for _, i := range makerange(1, cut_point+1) {
+		nodes = append(nodes, element(Node{
+			name:   "s" + strconv.Itoa(int(i)),
+			weight: 3,
+		}))
+	}
+	for _, i := range makerange(cut_point+1, total_number+1) {
+		parent_index := (int(i) + n - 2) / n
+		nodes = append(nodes, element(Node{
+			name:   nodes[parent_index-1].name + "h" + strconv.Itoa((int(i)+n-2)%n+1),
+			weight: 1,
+		}))
+	}
+	for _, i := range makerange(2, total_number+1) {
+		edges = append(edges, Edge{
+			start:  element(nodes[(int(i)+n-2)/n-1]),
+			end:    element(nodes[int(i)-1]),
+			weight: 1,
+		})
+		edges = append(edges, Edge{
+			start:  element(nodes[int(i)-1]),
+			end:    element(nodes[(int(i)+n-2)/n-1]),
+			weight: 1,
+		})
+	}
+	return edges, nodes, uint(len(nodes))
+}
+
+type Pod struct {
+	aggregations []Node
+	grounds      []Ground
+}
+
+type Ground struct {
+	access Node
+	hosts  []Node
+}
+
+type FatTree struct {
+	cores []Node
+	pods  []Pod
+}
+
+func Generate_Fat_Tree_Topo(n int, random bool) ([]Edge, []element, uint) {
+	edges := make([]Edge, 0)
+	nodes := make([]element, 0)
+	var fat_tree FatTree
+	edges_hash := make(map[element]int, 0)
+
+	for _, i := range makerange(1, n+1) {
+		fat_tree.cores = append(fat_tree.cores, Node{
+			name:   "core" + strconv.Itoa(int(i)),
+			weight: uint(n),
+		})
+
+		var pod Pod
+		for _, j := range makerange(1, n/2+1) {
+			pod.aggregations = append(pod.aggregations, Node{
+				name:   "aggt" + strconv.Itoa((int(i)-1)*n/2+int(j)),
+				weight: uint(n),
+			})
+
+			var ground Ground
+			for _, k := range makerange(1, n/2+1) {
+				ground.access = Node{
+					name:   "accs" + strconv.Itoa((int(i)-1)*n/2+int(j)),
+					weight: uint(n),
+				}
+
+				ground.hosts = append(ground.hosts, Node{
+					name:   "host" + strconv.Itoa((int(i)-1)*n*n/4+(int(j)-1)*n/2+int(k)),
+					weight: 1,
+				})
+
+			}
+			pod.grounds = append(pod.grounds, ground)
+		}
+		fat_tree.pods = append(fat_tree.pods, pod)
+	}
+
+	for i, core := range fat_tree.cores {
+		aggregation_count := i * 2 / n
+		for _, pod := range fat_tree.pods {
+			r := rand.Intn(5) + 1
+			weight := uint(1)
+			if random {
+				weight = uint(r)
+			}
+			edges = append(edges, Edge{
+				start:  element(core),
+				end:    element(pod.aggregations[aggregation_count]),
+				weight: weight,
+			})
+			edges = append(edges, Edge{
+				start:  element(pod.aggregations[aggregation_count]),
+				end:    element(core),
+				weight: weight,
+			})
+		}
+	}
+
+	for _, pod := range fat_tree.pods {
+		for _, aggregation := range pod.aggregations {
+			for _, ground := range pod.grounds {
+				r := rand.Intn(5) + 1
+				weight := uint(1)
+				if random {
+					weight = uint(r)
+				}
+				edges = append(edges, Edge{
+					start:  element(aggregation),
+					end:    element(ground.access),
+					weight: weight,
+				})
+				edges = append(edges, Edge{
+					start:  element(ground.access),
+					end:    element(aggregation),
+					weight: weight,
+				})
+			}
+		}
+	}
+
+	for _, pod := range fat_tree.pods {
+		for _, ground := range pod.grounds {
+			for _, host := range ground.hosts {
+				r := rand.Intn(5) + 1
+				weight := uint(1)
+				if random {
+					weight = uint(r)
+				}
+				edges = append(edges, Edge{
+					start:  element(ground.access),
+					end:    element(host),
+					weight: weight,
+				})
+				edges = append(edges, Edge{
+					start:  element(host),
+					end:    element(ground.access),
+					weight: weight,
+				})
+			}
+		}
+	}
+
+	for _, edge := range edges {
+		edges_hash[edge.start] = 0
+		edges_hash[edge.end] = 0
+	}
+
+	for node, _ := range edges_hash {
+		nodes = append(nodes, node)
+	}
+
+	return edges, nodes, uint(n*n*n/4 + n*n + n)
+}
+
+func generate_test_topo() ([]Edge, []element) {
+	nodes := make([]element, 0)
+	for _, i := range makerange(1, 6) {
+		nodes = append(nodes, element(Node{
+			name:   strconv.Itoa(int(i)),
+			weight: 1,
+		}))
+	}
+	edges := []Edge{
+		{
+			start:  element(nodes[0]),
+			end:    element(nodes[1]),
+			weight: 1,
+		},
+		{
+			start:  element(nodes[0]),
+			end:    element(nodes[2]),
+			weight: 1,
+		},
+		{
+			start:  element(nodes[0]),
+			end:    element(nodes[3]),
+			weight: 1,
+		},
+		{
+			start:  element(nodes[1]),
+			end:    element(nodes[2]),
+			weight: 1,
+		},
+		{
+			start:  element(nodes[2]),
+			end:    element(nodes[3]),
+			weight: 1,
+		},
+		{
+			start:  element(nodes[2]),
+			end:    element(nodes[4]),
+			weight: 1,
+		},
+		{
+			start:  element(nodes[1]),
+			end:    element(nodes[3]),
+			weight: 1,
+		},
+		{
+			start:  element(nodes[1]),
+			end:    element(nodes[0]),
+			weight: 1,
+		},
+		{
+			start:  element(nodes[2]),
+			end:    element(nodes[0]),
+			weight: 1,
+		},
+		{
+			start:  element(nodes[3]),
+			end:    element(nodes[0]),
+			weight: 1,
+		},
+		{
+			start:  element(nodes[2]),
+			end:    element(nodes[1]),
+			weight: 1,
+		},
+		{
+			start:  element(nodes[3]),
+			end:    element(nodes[2]),
+			weight: 1,
+		},
+		{
+			start:  element(nodes[4]),
+			end:    element(nodes[2]),
+			weight: 1,
+		},
+		{
+			start:  element(nodes[3]),
+			end:    element(nodes[1]),
+			weight: 1,
+		},
+	}
+
+	return edges, nodes
+}
+
+func AffinityClusterPartition(message rpctest.Message, partition_number uint, alpha float64) map[string]uint {
 	edges, scale := generate_edges(message)
 	hash_edges := get_hash_edges(edges)
 	new_edges := find_commen_neighbors(edges)
@@ -908,5 +1488,5 @@ func AffinityClusterPartition(message rpctest.Message, partition_number uint) ma
 	line_after_swap := Combination(af, partition_number, uint(math.Sqrt(float64(scale/partition_number))), true)
 	log.Print("line after swap is:", line_after_swap)
 
-	return DynamicProgram(line_after_swap, partition_number, hash_edges)
+	return DynamicProgram(line_after_swap, partition_number, hash_edges, alpha, edges)
 }
