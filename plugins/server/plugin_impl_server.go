@@ -80,6 +80,7 @@ func (p *Plugin) start_server() {
 		creation_count := 0
 		for {
 			message := <-p.DataChannel
+			// message type=0: topo creation
 			if message.Type == 0 {
 				creation_count++
 				p.Log.Infoln("Server receive a message")
@@ -90,9 +91,20 @@ func (p *Plugin) start_server() {
 				assignment := p.Kubernetes.AffinityClusterPartition(message)
 				p.ETCD.Directory_Create(assignment)
 				p.Kubernetes.Make_Topology(message)
+				if message.Command.EmunetCreation.Emunet.Type == "fat-tree" {
+					p.ETCD.Send_pod_type_pair(p.Kubernetes.SenderPods, p.Kubernetes.ReceiverPods, p.Kubernetes.PodPair)
+					p.ETCD.Send_Topology_Type("fat-tree")
+				} else {
+					p.ETCD.Send_Topology_Type("other")
+				}
 				p.ETCD.Commit_Create_Info(message)
 				p.Kubernetes.Create_Deployment(assignment)
 				go p.watch_tap_recreation(context.Background())
+			} else if message.Type == 3 {
+				// message type = 3: full speed test
+				p.Log.Println("receive a test command!")
+				p.ETCD.Get_Receiver_Ready()
+				p.ETCD.FullTest()
 			}
 		}
 	}()
@@ -198,7 +210,7 @@ func (p *Plugin) Set_Pod(pod_name string, podlist map[string]*kubernetes.Mocknet
 	}*/
 
 	if flag {
-		p.Log.Infoln("--------------- pod", pod_name, "is ready ---------------")
+		p.Log.Infoln("pod", pod_name, "is ready to be config")
 		p.ETCD.Send_Pod_Info(mocknet_pod)
 	}
 }

@@ -57,10 +57,13 @@ type Deps struct {
 	AssignedWorkerNumber       int
 	PodList                    MocknetPodSync
 	PluginInitFinished         bool
+	SenderPods                 []string
+	ReceiverPods               []string
 	Pod_name_reflector         map[string]string      // key: completed name, value: simplified name
 	Pod_name_reflector_rev     map[string]string      // key: simplified name, value: completed name
 	WorkerThreadCoreAssignment map[int]*WorkerThreads // key: worker-name, value: present core to be allocated
 	MainThreadCoreAssignment   map[int]int            // key: worker-name, value: present core to be allocated
+	PodPair                    map[string]string      // pod pair for test (sender-receiver)
 }
 
 type WorkerThreads struct {
@@ -124,6 +127,9 @@ func (p *Plugin) Init() error {
 	p.Pod_name_reflector_rev = make(map[string]string)
 	p.WorkerThreadCoreAssignment = make(map[int]*WorkerThreads)
 	p.MainThreadCoreAssignment = make(map[int]int)
+	p.SenderPods = make([]string, 0)
+	p.ReceiverPods = make([]string, 0)
+	p.PodPair = make(map[string]string)
 
 	// get current kubeconfig
 	var kubeconfig *string
@@ -157,6 +163,13 @@ func (p *Plugin) Init() error {
 	}
 	p.PluginInitFinished = true
 
+	nodes, err := p.ClientSet.CoreV1().Nodes().List(metav1.ListOptions{})
+	if err != nil {
+		p.Log.Errorln("failed to get nodes infomation")
+		panic(err)
+	}
+	p.AssignedWorkerNumber = len(nodes.Items) - 1
+
 	return nil
 }
 
@@ -165,6 +178,12 @@ func (p *Plugin) String() string {
 }
 
 func (p *Plugin) Close() error {
+	if err := p.ClientSet.AppsV1().Deployments(p.K8sNamespace).DeleteCollection(&metav1.DeleteOptions{}, metav1.ListOptions{}); err != nil {
+		p.Log.Errorln(err)
+		return err
+	} else {
+		p.Log.Infoln("successfully delete all deployment")
+	}
 	return nil
 }
 
@@ -214,19 +233,53 @@ func (p *Plugin) Make_Topology(message rpctest.Message) error {
 				Pod2inf: node2_inf,
 			},
 		)
+	}
 
-		for podname, infset := range p.PodSet {
-			infs := make([]string, 0)
-			for inf := range infset {
-				infs = append(infs, inf)
+	for podname, infset := range p.PodSet {
+		infs := make([]string, 0)
+		for inf := range infset {
+			infs = append(infs, inf)
+		}
+		pod := Pod{
+			Name: podname,
+			Infs: infs,
+		}
+		p.MocknetTopology.Pods = append(p.MocknetTopology.Pods, pod)
+	}
+
+	if message.Command.EmunetCreation.Emunet.Type == "fat-tree" {
+		switch_number := 0
+		//p.Log.Infoln("pods number =", len(p.MocknetTopology.Pods))
+		for _, pod := range p.MocknetTopology.Pods {
+			if !strings.Contains(pod.Name, "h") {
+				switch_number += 1
 			}
-			pod := Pod{
-				Name: podname,
-				Infs: infs,
-			}
-			p.MocknetTopology.Pods = append(p.MocknetTopology.Pods, pod)
 		}
 
+		for _, pod := range p.MocknetTopology.Pods {
+			if strings.Contains(pod.Name, "h") {
+				switch_id_string := strings.Split(pod.Name, "s")[1]
+				switch_id, err := strconv.Atoi(switch_id_string)
+				if err != nil {
+					panic(err)
+				}
+				if switch_id <= switch_number/2 {
+					// mark left side as sender
+					p.SenderPods = append(p.SenderPods, pod.Name)
+				} else {
+					// mark right side as receiver
+					p.ReceiverPods = append(p.ReceiverPods, pod.Name)
+				}
+			}
+		}
+
+		p.Log.Println("p.SenderPods =", p.SenderPods)
+		p.Log.Println("p.ReceiverPods =", p.ReceiverPods)
+		var i int
+		for i = 0; i < len(p.SenderPods); i++ {
+			p.PodPair[p.SenderPods[i]] = p.ReceiverPods[i]
+			p.PodPair[p.ReceiverPods[i]] = p.SenderPods[i]
+		}
 	}
 
 	return nil
@@ -234,18 +287,13 @@ func (p *Plugin) Make_Topology(message rpctest.Message) error {
 
 func (p *Plugin) AffinityClusterPartition(message rpctest.Message) map[string]uint {
 	workers := make(map[uint]string, 0)
-	nodes, err := p.ClientSet.CoreV1().Nodes().List(metav1.ListOptions{})
-	if err != nil {
-		p.Log.Errorln("failed to get nodes infomation")
-		panic(err)
-	}
 
-	for i := 1; i <= len(nodes.Items)-1; i++ {
+	for i := 1; i <= p.AssignedWorkerNumber; i++ {
 		// uncomment these to assign single core to a pod
-		p.WorkerThreadCoreAssignment[i] = &WorkerThreads{
+		/*p.WorkerThreadCoreAssignment[i] = &WorkerThreads{
 			start: 0,
 			end:   0,
-		}
+		}*/
 
 		// uncomment these to assign multiple core to a pod
 
@@ -257,14 +305,14 @@ func (p *Plugin) AffinityClusterPartition(message rpctest.Message) map[string]ui
 		p.MainThreadCoreAssignment[i] = 0
 	}
 
-	worker_assignment := affinity.AffinityClusterPartition(message, uint(len(nodes.Items))-1) // -1 for master node
+	worker_assignment := affinity.AffinityClusterPartition(message, uint(p.AssignedWorkerNumber), 0.5, true) // -1 for master node
 	p.Log.Infoln("the assignment is:", worker_assignment)
 
 	for _, hostid := range worker_assignment {
 		workers[hostid] = ""
 	}
 	p.AssignedWorkerNumber = len(workers)
-	p.Log.Infoln("len of workers is", len(workers))
+	// p.Log.Infoln("len of workers is", len(workers))
 	return worker_assignment
 }
 

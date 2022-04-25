@@ -68,6 +68,15 @@ func (p *Plugin) Init() error {
 
 	p.PluginInitFinished = true
 
+	// clear the database
+	_, err := p.EtcdClient.Delete(context.Background(), "/", clientv3.WithPrefix())
+	if err != nil {
+		panic("error clear all value in initialzing")
+	}
+	//_, err = kvs.Delete(context.Background(), "/mocknet/link/", clientv3.WithPrefix())
+
+	p.Log.Infoln("clear all info finished in initialzing")
+
 	return nil
 }
 
@@ -78,7 +87,16 @@ func (p *Plugin) String() string {
 // clear all key-value in etcd
 func (p *Plugin) Close() error {
 	kvs := clientv3.NewKV(p.EtcdClient)
-	_, err := kvs.Delete(context.Background(), "/", clientv3.WithPrefix())
+
+	_, err := kvs.Put(context.Background(), "/mocknet/Close", "true")
+	if err != nil {
+		panic("error when send close signal")
+	}
+
+	p.wait_for_response("Close")
+
+	// clear the database
+	_, err = kvs.Delete(context.Background(), "/", clientv3.WithPrefix())
 	if err != nil {
 		panic("error when clear all value")
 	}
@@ -146,6 +164,21 @@ func (p *Plugin) Send_Ready(count int) error {
 	return nil
 }
 
+func (p *Plugin) Send_Topology_Type(topo_type string) error {
+	kv := clientv3.NewKV(p.EtcdClient)
+	_, err := kv.Put(context.Background(), "/mocknet/topo/type", topo_type)
+	if err != nil {
+		p.Log.Errorln(err)
+		panic(err)
+	} else {
+		p.Log.Infoln("successfully send topology type")
+	}
+
+	p.wait_for_response("TopologyType")
+
+	return nil
+}
+
 func (p *Plugin) Send_Pod_Info(mocknet_pod *kubernetes.MocknetPod) error {
 	p.PodToHost.Lock.Lock()
 	defer p.PodToHost.Lock.Unlock()
@@ -172,8 +205,6 @@ func (p *Plugin) Send_Pod_Info(mocknet_pod *kubernetes.MocknetPod) error {
 	if err != nil {
 		p.Log.Errorln(err)
 		panic(err)
-	} else {
-		p.Log.Infoln("commited data to master etcd for pod", mocknet_pod.Pod.Name)
 	}
 
 	for _, pod := range p.Kubernetes.MocknetTopology.Pods {
@@ -187,6 +218,7 @@ func (p *Plugin) Send_Pod_Info(mocknet_pod *kubernetes.MocknetPod) error {
 	return nil
 }
 
+// wait for all workers finishing some work
 func (p *Plugin) wait_for_response(event string) error {
 	p.Log.Infoln("waiting for event", event)
 	kvs := clientv3.NewKV(p.EtcdClient)
@@ -203,6 +235,7 @@ func (p *Plugin) wait_for_response(event string) error {
 		}
 		//p.Log.Infoln("AssignedWorkerNumber is", p.Kubernetes.AssignedWorkerNumber)
 		//p.Log.Infoln("done_count is", done_count)
+		// 1. normal situation that create deployment 2. situation that stop before deployment creation
 		if done_count == p.Kubernetes.AssignedWorkerNumber && p.Kubernetes.AssignedWorkerNumber >= 1 {
 			p.Log.Infoln("all workers have finished ", event)
 			break
@@ -215,6 +248,53 @@ func (p *Plugin) wait_for_response(event string) error {
 func Parse_pod_name(logic_name string) string {
 	split_name := strings.Split(logic_name, "-")
 	return split_name[1]
+}
+
+// send pods' type (sender or receiver) to database, only for fat-tree topology by now
+func (p *Plugin) Send_pod_type_pair(SenderPods []string, ReceiverPods []string, TestPair map[string]string) error {
+	key_prefix_type := "/mocknet/podtype/"
+	key_prefix_pair := "/mocknet/podpair/"
+
+	kvs := clientv3.NewKV(p.EtcdClient)
+	for _, podname := range SenderPods {
+		key := key_prefix_type + podname
+		value := "name:" + podname + "," + "kind:" + "sender"
+		kvs.Put(context.Background(), key, value)
+	}
+
+	for _, podname := range ReceiverPods {
+		key := key_prefix_type + podname
+		value := "name:" + podname + "," + "kind:" + "receiver"
+		kvs.Put(context.Background(), key, value)
+	}
+
+	for pod1, pod2 := range TestPair {
+		key := key_prefix_pair + pod1 + "-" + pod2
+		value := pod1 + "-" + pod2
+		kvs.Put(context.Background(), key, value)
+	}
+	// p.wait_for_response("PodTypeReceiveFinished")
+	return nil
+}
+
+func (p *Plugin) Get_Receiver_Ready() error {
+	kvs := clientv3.NewKV(p.EtcdClient)
+	key := "mocknet/command/GetReceiverReady"
+	value := "true"
+	kvs.Put(context.Background(), key, value)
+
+	p.wait_for_response("ReceiverReady")
+
+	return nil
+}
+
+func (p *Plugin) FullTest() error {
+	kvs := clientv3.NewKV(p.EtcdClient)
+	key := "mocknet/command/FullTest"
+	value := "true"
+	kvs.Put(context.Background(), key, value)
+
+	return nil
 }
 
 /*func (p *Plugin) Pod_Tap_Create(pod_names []string) error {

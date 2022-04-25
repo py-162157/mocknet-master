@@ -73,6 +73,7 @@ message RequestResponse {
 message Emunet {
     repeated Pod pods = 1;
     repeated Link links = 2;
+    string type = 3;
 }
 
 message Link {

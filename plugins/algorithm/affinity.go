@@ -468,6 +468,7 @@ func RankSwap(line []element, k uint, r uint, q []uint) []element {
 		divided_line = append(divided_line, partition)
 		cut_size = append(cut_size, uint(partition_size))
 	}
+	log.Println("the devided_line =", divided_line)
 	log.Println("Begin to optimize the cut size")
 
 	hash_pair := make(map[uint]uint)
@@ -481,6 +482,7 @@ func RankSwap(line []element, k uint, r uint, q []uint) []element {
 		}
 	}
 	log.Println("randomly pair intervals completed!")
+	log.Println("hashpair =", hash_pair)
 
 	cut_size_copy := cut_size
 	partition_size_rank := make([]uint, 0)
@@ -795,11 +797,16 @@ func DynamicProgram(line []element, k uint, edges map[HashEdge]uint, alpha float
 	log.Println("dynamic programing started")
 
 	max_edge_weight := uint(0)
-	for _, weight := range edges {
-		if weight > uint(max_edge_weight) {
-			max_edge_weight = weight
+	for _, edge := range origin_edges {
+		if edge.weight > uint(max_edge_weight) {
+			max_edge_weight = edge.weight
 		}
 	}
+
+	fmt.Println("k =", k)
+	fmt.Println("max_edge_weight =", max_edge_weight)
+	fmt.Println("vertex_num =", vertex_num)
+	//fmt.Println("origin edges =", origin_edges)
 
 	qs := q_list(k)
 	qs = qs[1:]
@@ -875,9 +882,9 @@ func DynamicProgram(line []element, k uint, edges map[HashEdge]uint, alpha float
 					A[i][j][q].cut_points = append(A[i][j][q].cut_points, min_cut_point)
 					right_part := A[min_cut_point+1][j][right].cut_points
 					A[i][j][q].cut_points = append(A[i][j][q].cut_points, right_part...)
-					if i == 0 && j == uint(vertex_num)-1 && q == k {
+					/*if i == 0 && j == uint(vertex_num)-1 && q == k {
 						log.Println("debug! The C is: ", C[i][j][min_cut_point], "cost is: ", added_edges_weight)
-					}
+					}*/
 				}
 			}
 		}
@@ -968,7 +975,7 @@ func DynamicProgram(line []element, k uint, edges map[HashEdge]uint, alpha float
 func Combination(af Affinity, partition_number uint, interval_len uint, rank_swap bool) []element {
 	q := make([]uint, 0)
 	line := af.linear_embed()
-	log.Println(line)
+	log.Println("line =", line)
 	for _, i := range makerange(0, int(partition_number)+1) {
 		q = append(q, uint(math.Floor(float64(i*uint(len(line)))/float64(partition_number))))
 	}
@@ -1038,15 +1045,15 @@ func make_random_graph(vertex uint) []Edge {
 	return edges
 }
 
-/*func Random_mock(scale uint, partition_number uint, rank_swap bool, threshold uint) {
+func Random_mock(scale uint, partition_number uint, rank_swap bool, threshold uint, alpha float64) {
 	edges := make_random_graph(scale)
 	hash_edges := get_hash_edges(edges)
 	new_edges := find_commen_neighbors(edges)
 	af := make_cluster(new_edges, threshold, true, true)
 	line_after_swap := Combination(af, partition_number, uint(math.Sqrt(float64(scale/partition_number))), rank_swap)
 
-	DynamicProgram(line_after_swap, partition_number, hash_edges)
-}*/
+	DynamicProgram(line_after_swap, partition_number, hash_edges, alpha, edges)
+}
 
 func generate_edges(message rpctest.Message) ([]Edge, uint) {
 	topo := message.Command.EmunetCreation.Emunet
@@ -1067,6 +1074,7 @@ func generate_edges(message rpctest.Message) ([]Edge, uint) {
 				name:   edge.Node2.Name,
 				weight: node_weights[edge.Node2.Name],
 			}),
+			weight: 1,
 		})
 	}
 	return edges, uint(len(topo.Pods))
@@ -1231,261 +1239,20 @@ func Random_partition(edges []Edge, line []element, partition_number uint, hash_
 	//return edge_weight_cut_off / 2, N
 }
 
-func Generate_Tree_Topo(m int, n int) ([]Edge, []element, uint) {
-	nodes := make([]element, 0)
-	edges := make([]Edge, 0)
-	cut_point := (1 - int(math.Pow(float64(n), float64(m)))) / (1 - n)      // 最后一个switch节点的序号，从1开始
-	total_number := (1 - int(math.Pow(float64(n), float64(m+1)))) / (1 - n) // 总节点数
-	for _, i := range makerange(1, cut_point+1) {
-		nodes = append(nodes, element(Node{
-			name:   "s" + strconv.Itoa(int(i)),
-			weight: 3,
-		}))
-	}
-	for _, i := range makerange(cut_point+1, total_number+1) {
-		parent_index := (int(i) + n - 2) / n
-		nodes = append(nodes, element(Node{
-			name:   nodes[parent_index-1].name + "h" + strconv.Itoa((int(i)+n-2)%n+1),
-			weight: 1,
-		}))
-	}
-	for _, i := range makerange(2, total_number+1) {
-		edges = append(edges, Edge{
-			start:  element(nodes[(int(i)+n-2)/n-1]),
-			end:    element(nodes[int(i)-1]),
-			weight: 1,
-		})
-		edges = append(edges, Edge{
-			start:  element(nodes[int(i)-1]),
-			end:    element(nodes[(int(i)+n-2)/n-1]),
-			weight: 1,
-		})
-	}
-	return edges, nodes, uint(len(nodes))
-}
-
-type Pod struct {
-	aggregations []Node
-	grounds      []Ground
-}
-
-type Ground struct {
-	access Node
-	hosts  []Node
-}
-
-type FatTree struct {
-	cores []Node
-	pods  []Pod
-}
-
-func Generate_Fat_Tree_Topo(n int, random bool) ([]Edge, []element, uint) {
-	edges := make([]Edge, 0)
-	nodes := make([]element, 0)
-	var fat_tree FatTree
-	edges_hash := make(map[element]int, 0)
-
-	for _, i := range makerange(1, n+1) {
-		fat_tree.cores = append(fat_tree.cores, Node{
-			name:   "core" + strconv.Itoa(int(i)),
-			weight: uint(n),
-		})
-
-		var pod Pod
-		for _, j := range makerange(1, n/2+1) {
-			pod.aggregations = append(pod.aggregations, Node{
-				name:   "aggt" + strconv.Itoa((int(i)-1)*n/2+int(j)),
-				weight: uint(n),
-			})
-
-			var ground Ground
-			for _, k := range makerange(1, n/2+1) {
-				ground.access = Node{
-					name:   "accs" + strconv.Itoa((int(i)-1)*n/2+int(j)),
-					weight: uint(n),
-				}
-
-				ground.hosts = append(ground.hosts, Node{
-					name:   "host" + strconv.Itoa((int(i)-1)*n*n/4+(int(j)-1)*n/2+int(k)),
-					weight: 1,
-				})
-
-			}
-			pod.grounds = append(pod.grounds, ground)
-		}
-		fat_tree.pods = append(fat_tree.pods, pod)
-	}
-
-	for i, core := range fat_tree.cores {
-		aggregation_count := i * 2 / n
-		for _, pod := range fat_tree.pods {
-			r := rand.Intn(5) + 1
-			weight := uint(1)
-			if random {
-				weight = uint(r)
-			}
-			edges = append(edges, Edge{
-				start:  element(core),
-				end:    element(pod.aggregations[aggregation_count]),
-				weight: weight,
-			})
-			edges = append(edges, Edge{
-				start:  element(pod.aggregations[aggregation_count]),
-				end:    element(core),
-				weight: weight,
-			})
-		}
-	}
-
-	for _, pod := range fat_tree.pods {
-		for _, aggregation := range pod.aggregations {
-			for _, ground := range pod.grounds {
-				r := rand.Intn(5) + 1
-				weight := uint(1)
-				if random {
-					weight = uint(r)
-				}
-				edges = append(edges, Edge{
-					start:  element(aggregation),
-					end:    element(ground.access),
-					weight: weight,
-				})
-				edges = append(edges, Edge{
-					start:  element(ground.access),
-					end:    element(aggregation),
-					weight: weight,
-				})
-			}
-		}
-	}
-
-	for _, pod := range fat_tree.pods {
-		for _, ground := range pod.grounds {
-			for _, host := range ground.hosts {
-				r := rand.Intn(5) + 1
-				weight := uint(1)
-				if random {
-					weight = uint(r)
-				}
-				edges = append(edges, Edge{
-					start:  element(ground.access),
-					end:    element(host),
-					weight: weight,
-				})
-				edges = append(edges, Edge{
-					start:  element(host),
-					end:    element(ground.access),
-					weight: weight,
-				})
-			}
-		}
-	}
-
-	for _, edge := range edges {
-		edges_hash[edge.start] = 0
-		edges_hash[edge.end] = 0
-	}
-
-	for node, _ := range edges_hash {
-		nodes = append(nodes, node)
-	}
-
-	return edges, nodes, uint(n*n*n/4 + n*n + n)
-}
-
-func generate_test_topo() ([]Edge, []element) {
-	nodes := make([]element, 0)
-	for _, i := range makerange(1, 6) {
-		nodes = append(nodes, element(Node{
-			name:   strconv.Itoa(int(i)),
-			weight: 1,
-		}))
-	}
-	edges := []Edge{
-		{
-			start:  element(nodes[0]),
-			end:    element(nodes[1]),
-			weight: 1,
-		},
-		{
-			start:  element(nodes[0]),
-			end:    element(nodes[2]),
-			weight: 1,
-		},
-		{
-			start:  element(nodes[0]),
-			end:    element(nodes[3]),
-			weight: 1,
-		},
-		{
-			start:  element(nodes[1]),
-			end:    element(nodes[2]),
-			weight: 1,
-		},
-		{
-			start:  element(nodes[2]),
-			end:    element(nodes[3]),
-			weight: 1,
-		},
-		{
-			start:  element(nodes[2]),
-			end:    element(nodes[4]),
-			weight: 1,
-		},
-		{
-			start:  element(nodes[1]),
-			end:    element(nodes[3]),
-			weight: 1,
-		},
-		{
-			start:  element(nodes[1]),
-			end:    element(nodes[0]),
-			weight: 1,
-		},
-		{
-			start:  element(nodes[2]),
-			end:    element(nodes[0]),
-			weight: 1,
-		},
-		{
-			start:  element(nodes[3]),
-			end:    element(nodes[0]),
-			weight: 1,
-		},
-		{
-			start:  element(nodes[2]),
-			end:    element(nodes[1]),
-			weight: 1,
-		},
-		{
-			start:  element(nodes[3]),
-			end:    element(nodes[2]),
-			weight: 1,
-		},
-		{
-			start:  element(nodes[4]),
-			end:    element(nodes[2]),
-			weight: 1,
-		},
-		{
-			start:  element(nodes[3]),
-			end:    element(nodes[1]),
-			weight: 1,
-		},
-	}
-
-	return edges, nodes
-}
-
-func AffinityClusterPartition(message rpctest.Message, partition_number uint, alpha float64) map[string]uint {
+func AffinityClusterPartition(message rpctest.Message, partition_number uint, alpha float64, RankSwap bool) map[string]uint {
 	edges, scale := generate_edges(message)
 	hash_edges := get_hash_edges(edges)
-	new_edges := find_commen_neighbors(edges)
-	//log.Println("new edges are:", new_edges)
+	//new_edges := find_commen_neighbors(edges)
+	log.Println("edges are:", edges)
 	threshold := scale / partition_number
-	af := make_cluster(new_edges, threshold, true, true)
+	log.Println("scale =", scale, "threshold =", threshold)
+	af := make_cluster(edges, threshold, true, true)
 	//af.print_all_clusters()
-	line_after_swap := Combination(af, partition_number, uint(math.Sqrt(float64(scale/partition_number))), true)
+	interval_len := uint(math.Sqrt(float64(scale / partition_number)))
+	if interval_len == 0 {
+		interval_len = 1
+	}
+	line_after_swap := Combination(af, partition_number, interval_len, RankSwap)
 	log.Print("line after swap is:", line_after_swap)
 
 	return DynamicProgram(line_after_swap, partition_number, hash_edges, alpha, edges)
