@@ -248,12 +248,18 @@ func (p *Plugin) Make_Topology(message rpctest.Message) error {
 	}
 
 	if message.Command.EmunetCreation.Emunet.Type == "fat-tree" {
-		switch_number := 0
-		//p.Log.Infoln("pods number =", len(p.MocknetTopology.Pods))
-		for _, pod := range p.MocknetTopology.Pods {
-			if !strings.Contains(pod.Name, "h") {
-				switch_number += 1
+		host_numbers := 0
+		for podname, _ := range p.PodSet {
+			if strings.Contains(podname, "h") {
+				host_numbers++
 			}
+		}
+		k := 4
+		for {
+			if k*k*k/4 == host_numbers {
+				break
+			}
+			k += 2
 		}
 
 		for _, pod := range p.MocknetTopology.Pods {
@@ -263,7 +269,7 @@ func (p *Plugin) Make_Topology(message rpctest.Message) error {
 				if err != nil {
 					panic(err)
 				}
-				if switch_id <= switch_number/2 {
+				if switch_id <= k*k*3/4 {
 					// mark left side as sender
 					p.SenderPods = append(p.SenderPods, pod.Name)
 				} else {
@@ -285,21 +291,21 @@ func (p *Plugin) Make_Topology(message rpctest.Message) error {
 	return nil
 }
 
-func (p *Plugin) AffinityClusterPartition(message rpctest.Message) map[string]uint {
+// cores: how many cores are assigned to a pod
+func (p *Plugin) AffinityClusterPartition(message rpctest.Message, cores int) map[string]uint {
 	workers := make(map[uint]string, 0)
 
 	for i := 1; i <= p.AssignedWorkerNumber; i++ {
-		// uncomment these to assign single core to a pod
-		/*p.WorkerThreadCoreAssignment[i] = &WorkerThreads{
-			start: 0,
-			end:   0,
-		}*/
-
-		// uncomment these to assign multiple core to a pod
-
-		p.WorkerThreadCoreAssignment[i] = &WorkerThreads{
-			start: 0,
-			end:   2,
+		if cores == 1 {
+			p.WorkerThreadCoreAssignment[i] = &WorkerThreads{
+				start: 0,
+				end:   0,
+			}
+		} else {
+			p.WorkerThreadCoreAssignment[i] = &WorkerThreads{
+				start: 0,
+				end:   cores - 1,
+			}
 		}
 
 		p.MainThreadCoreAssignment[i] = 0
@@ -316,32 +322,32 @@ func (p *Plugin) AffinityClusterPartition(message rpctest.Message) map[string]ui
 	return worker_assignment
 }
 
-func (p *Plugin) Create_Deployment(assignment map[string]uint) {
+// cores: how many cores are assigned to a pod
+//
+// start_core: the assignment start from which core
+//
+// start_core: the assignment end till which core.
+func (p *Plugin) Create_Deployment(assignment map[string]uint, cores int, start_core int, end_core int) {
+	duration := start_core - end_core + 1
 	for podname, hostid := range assignment {
 		// assign core to pod-side vpp
-
-		// uncomment these to assign simgle core to a pod
-		/*
-			start := p.WorkerThreadCoreAssignment[int(hostid)].start
-			p.WorkerThreadCoreAssignment[int(hostid)].core_string = strconv.Itoa(start)
-			p.WorkerThreadCoreAssignment[int(hostid)].start = (start + 1) % 21
-		*/
-
-		// uncomment these to assign multiple core to a pod
-		// use core 11-31 as pod worker thread cpus, 3 cores are allocated to every pod-vpp
-
 		start := p.WorkerThreadCoreAssignment[int(hostid)].start
 		end := p.WorkerThreadCoreAssignment[int(hostid)].end
-		if start < end {
-			p.WorkerThreadCoreAssignment[int(hostid)].core_string = strconv.Itoa(start+11) + "-" + strconv.Itoa(end+11)
+		if cores == 1 {
+			p.WorkerThreadCoreAssignment[int(hostid)].core_string = strconv.Itoa(start + start_core)
+			p.WorkerThreadCoreAssignment[int(hostid)].start = (start + 1) % duration
 		} else {
-			list1 := strconv.Itoa(11) + "-" + strconv.Itoa(start+11)
-			list2 := strconv.Itoa(end+11) + "-" + strconv.Itoa(31)
-			p.WorkerThreadCoreAssignment[int(hostid)].core_string = list1 + "," + list2
-		}
+			if start < end {
+				p.WorkerThreadCoreAssignment[int(hostid)].core_string = strconv.Itoa(start+start_core) + "-" + strconv.Itoa(end+start_core)
+			} else {
+				list1 := strconv.Itoa(start_core) + "-" + strconv.Itoa(start+start_core)
+				list2 := strconv.Itoa(end+end_core) + "-" + strconv.Itoa(end_core)
+				p.WorkerThreadCoreAssignment[int(hostid)].core_string = list1 + "," + list2
+			}
 
-		p.WorkerThreadCoreAssignment[int(hostid)].start = (start + 3) % 21
-		p.WorkerThreadCoreAssignment[int(hostid)].end = (end + 3) % 21
+			p.WorkerThreadCoreAssignment[int(hostid)].start = (start + cores) % duration
+			p.WorkerThreadCoreAssignment[int(hostid)].end = (end + cores) % duration
+		}
 
 		// use core 32-36 as pod worker thread cpus
 		main_core_id := 32 + p.MainThreadCoreAssignment[int(hostid)]%5
@@ -356,6 +362,7 @@ func (p *Plugin) Create_Deployment(assignment map[string]uint) {
 		} else {
 			p.Log.Infoln("created deployment", podname)
 		}
+		//p.Log.Infoln("For pod", podname, "main core is", main_core_id, "worker cores are", p.WorkerThreadCoreAssignment[int(hostid)].core_string)
 	}
 }
 

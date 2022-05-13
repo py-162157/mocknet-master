@@ -125,6 +125,8 @@ func (p *Plugin) Commit_Create_Info(message rpctest.Message) error {
 
 	}
 
+	//p.Log.Infoln(message)
+
 	for _, link := range links {
 		value := ""
 		value = value + "node1:" + link.Node1.Name + ","
@@ -147,21 +149,15 @@ func (p *Plugin) Commit_Create_Info(message rpctest.Message) error {
 	return nil
 }
 
-func (p *Plugin) Send_Ready(count int) error {
-	// when worker node read "yes", then the transport has done
-
+func (p *Plugin) Send_Order(order string) {
 	kv := clientv3.NewKV(p.EtcdClient)
-	_, err := kv.Put(context.Background(), "/mocknet/topo/ready", strconv.Itoa(count))
+	_, err := kv.Put(context.Background(), "/mocknet/order/"+order, "done")
 	if err != nil {
 		p.Log.Errorln(err)
 		panic(err)
 	} else {
-		p.Log.Infoln("successfully send ready signal")
+		p.Log.Infoln("successfully send ", order, "order")
 	}
-
-	p.wait_for_response("NetCreationFinished")
-
-	return nil
 }
 
 func (p *Plugin) Send_Topology_Type(topo_type string) error {
@@ -250,6 +246,22 @@ func Parse_pod_name(logic_name string) string {
 	return split_name[1]
 }
 
+func (p *Plugin) Send_Creation_Finish() error {
+	key := "/mocknet/pods/CreationFinish"
+	value := "done"
+	kvs := clientv3.NewKV(p.EtcdClient)
+
+	_, err := kvs.Put(context.Background(), key, value)
+	if err != nil {
+		p.Log.Errorln(err)
+		panic(err)
+	}
+
+	p.Log.Infoln("inform worker that all pod are prepared to be configured")
+
+	return nil
+}
+
 // send pods' type (sender or receiver) to database, only for fat-tree topology by now
 func (p *Plugin) Send_pod_type_pair(SenderPods []string, ReceiverPods []string, TestPair map[string]string) error {
 	key_prefix_type := "/mocknet/podtype/"
@@ -297,19 +309,6 @@ func (p *Plugin) FullTest() error {
 	return nil
 }
 
-/*func (p *Plugin) Pod_Tap_Create(pod_names []string) error {
-	kvs := clientv3.NewKV(p.EtcdClient)
-	for _, pod_name := range pod_names {
-		if string([]byte(pod_name)[:1]) != "s" {
-			key := "/vnf-agent/mocknet-pod-" + parse_pod_name(pod_name) + "/config/vpp/v2/interfaces/tap0"
-			value := "{\"name\":\"tap0\",\"type\":\"TAP\",\"enabled\":true, \"vrf\":0, \"tap\":{\"version\":2,\"rx_ring_size\":256, \"enable_gso\":true, \"host_if_name\":\"tap0\"}}"
-			kvs.Put(context.Background(), key, value)
-		}
-	}
-	kvs.Put(context.Background(), "/mocknet/tap/CreationBegin", "true")
-	return nil
-}*/
-
 func (p *Plugin) Wait_Pod_Tap_Creation() {
 	p.wait_for_response("PodTapCreation")
 }
@@ -347,5 +346,11 @@ func (p *Plugin) Directory_Create(assignment map[string]uint) {
 		value := "pod:" + podname + "," + "hostid:" + "worker" + strconv.Itoa(int(hostid))
 		p.EtcdClient.Put(context.Background(), key, value)
 	}
+	p.EtcdClient.Put(context.Background(), "/mocknet/assignment/done", "done")
 	p.wait_for_response("DirectoryCreationFinished")
+}
+
+func (p *Plugin) Wait_For_MAC() {
+	p.wait_for_response("MACupload")
+	p.Send_Order("StaticARP")
 }

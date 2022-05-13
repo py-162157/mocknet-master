@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net"
+	"sync"
 	"time"
 
 	"mocknet/plugins/etcd"
@@ -87,8 +88,8 @@ func (p *Plugin) start_server() {
 				p.Log.Infoln("The message's type is 'emunet_creation'")
 				p.Log.Infoln("Start to create pods")
 				//p.Kubernetes.AffinityClusterPartition(message)
-				go p.watch_pod_creation_finished()
-				assignment := p.Kubernetes.AffinityClusterPartition(message)
+				assignment := p.Kubernetes.AffinityClusterPartition(message, 1)
+				go p.watch_pod_creation_finished(assignment)
 				p.ETCD.Directory_Create(assignment)
 				p.Kubernetes.Make_Topology(message)
 				if message.Command.EmunetCreation.Emunet.Type == "fat-tree" {
@@ -98,8 +99,11 @@ func (p *Plugin) start_server() {
 					p.ETCD.Send_Topology_Type("other")
 				}
 				p.ETCD.Commit_Create_Info(message)
-				p.Kubernetes.Create_Deployment(assignment)
-				go p.watch_tap_recreation(context.Background())
+				p.Kubernetes.Create_Deployment(assignment, 1, 11, 31)
+				if message.Command.EmunetCreation.Emunet.Type == "fat-tree" {
+					go p.ETCD.Wait_For_MAC()
+				}
+				//go p.watch_tap_recreation(context.Background())
 			} else if message.Type == 3 {
 				// message type = 3: full speed test
 				p.Log.Println("receive a test command!")
@@ -152,67 +156,34 @@ func (p *Plugin) watch_tap_recreation(ctx context.Context) error {
 	}
 }
 
-func (p *Plugin) watch_pod_creation_finished() {
-	for {
-		p.Kubernetes.PodList.Lock.Lock()
-		present_list := p.Kubernetes.PodList.List
-		for _, mocknet_pod := range present_list {
-			//p.Log.Infoln(mocknet_pod.Pod.Name, mocknet_pod.Handled)
-			if !mocknet_pod.Handled {
-				// host pod
-				simplified_name := p.Kubernetes.Pod_name_reflector[mocknet_pod.Pod.Name]
-				//p.Log.Infoln("setting for pod", simplified_name)
-				go p.Set_Pod(simplified_name, present_list)
-				p.Kubernetes.PodList.List[simplified_name].Handled = true
-			}
-		}
-		p.Kubernetes.PodList.Lock.Unlock()
-
-		time.Sleep(POD_CREATION_WATCH_INTERVAL)
-	}
-}
-
-func (p *Plugin) Set_Pod(pod_name string, podlist map[string]*kubernetes.MocknetPod) {
-	//p.Log.Infoln("setting for pod", pod_name)
-	// flag indicate whether the loop is broken for success or times over
-	flag := true
-	mocknet_pod := podlist[pod_name]
-	for {
-		if p.Kubernetes.Is_Creation_Completed(pod_name) {
-			break
-		}
-		time.Sleep(1 * time.Second)
-	}
-	/*if string([]byte(pod_name)[:1]) != "s" {
-		p.Log.Infoln("setting for pod", pod_name, "finished")
-		p.Kubernetes.Pod_tap_create(mocknet_pod.Pod)
-		count := 1
-		for {
-			if p.Kubernetes.Pod_Tap_Config(mocknet_pod.Pod) != nil {
-				p.Kubernetes.Pod_tap_create(mocknet_pod.Pod)
-			} else {
-				break
-			}
-			if count == 1 {
-				p.Log.Warningln("config for pod", pod_name, "failed, retrying")
-			}
-			count += 1
-			if count >= POD_CONFIG_RETRY_TIMES {
-				p.Log.Warningln("config for pod", pod_name, "failed and over max retry times, remark it as unhandled")
+func (p *Plugin) watch_pod_creation_finished(assignment map[string]uint) {
+	wg := sync.WaitGroup{}
+	wg.Add(len(assignment))
+	for podname, _ := range assignment {
+		pod_name := podname
+		go func() {
+			var mocknet_pod *kubernetes.MocknetPod
+			ok := false
+			for {
 				p.Kubernetes.PodList.Lock.Lock()
-				p.Kubernetes.PodList.List[pod_name].Handled = false
+				mocknet_pod, ok = p.Kubernetes.PodList.List[pod_name]
 				p.Kubernetes.PodList.Lock.Unlock()
-				flag = false
-				break
-			}
-			time.Sleep(2 * time.Second)
-		}
-	}*/
 
-	if flag {
-		p.Log.Infoln("pod", pod_name, "is ready to be config")
-		p.ETCD.Send_Pod_Info(mocknet_pod)
+				if p.Kubernetes.Is_Creation_Completed(pod_name) && ok {
+					break
+				}
+				time.Sleep(1 * time.Second)
+			}
+
+			p.Log.Infoln("pod", pod_name, "is ready to be config")
+			p.ETCD.Send_Pod_Info(mocknet_pod)
+
+			wg.Done()
+		}()
 	}
+
+	wg.Wait()
+	p.ETCD.Send_Creation_Finish()
 }
 
 func (p *Plugin) probe_etcd_plugins() {

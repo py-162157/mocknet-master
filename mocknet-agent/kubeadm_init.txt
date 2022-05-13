@@ -1,4 +1,4 @@
-[init] Using Kubernetes version: v1.23.1
+[init] Using Kubernetes version: v1.23.6
 [preflight] Running pre-flight checks
 [preflight] Pulling images required for setting up a Kubernetes cluster
 [preflight] This might take a minute or two, depending on the speed of your internet connection
@@ -32,14 +32,14 @@
 [control-plane] Creating static Pod manifest for "kube-scheduler"
 [etcd] Creating static Pod manifest for local etcd in "/etc/kubernetes/manifests"
 [wait-control-plane] Waiting for the kubelet to boot up the control plane as static Pods from directory "/etc/kubernetes/manifests". This can take up to 4m0s
-[apiclient] All control plane components are healthy after 7.004143 seconds
+[apiclient] All control plane components are healthy after 9.003223 seconds
 [upload-config] Storing the configuration used in ConfigMap "kubeadm-config" in the "kube-system" Namespace
 [kubelet] Creating a ConfigMap "kubelet-config-1.23" in namespace kube-system with the configuration for the kubelets in the cluster
 NOTE: The "kubelet-config-1.23" naming of the kubelet ConfigMap is deprecated. Once the UnversionedKubeletConfigMap feature gate graduates to Beta the default name will become just "kubelet-config". Kubeadm upgrade will handle this transition transparently.
 [upload-certs] Skipping phase. Please see --upload-certs
 [mark-control-plane] Marking the node master as control-plane by adding the labels: [node-role.kubernetes.io/master(deprecated) node-role.kubernetes.io/control-plane node.kubernetes.io/exclude-from-external-load-balancers]
 [mark-control-plane] Marking the node master as control-plane by adding the taints [node-role.kubernetes.io/master:NoSchedule]
-[bootstrap-token] Using token: y2pry5.ohgmbult63t5mtpk
+[bootstrap-token] Using token: 523s4t.txesa6sfn3ranr99
 [bootstrap-token] Configuring bootstrap tokens, cluster-info ConfigMap, RBAC Roles
 [bootstrap-token] configured RBAC rules to allow Node Bootstrap tokens to get nodes
 [bootstrap-token] configured RBAC rules to allow Node Bootstrap tokens to post CSRs in order for nodes to get long term certificate credentials
@@ -68,5 +68,5 @@ Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
 
 Then you can join any number of worker nodes by running the following on each as root:
 
-kubeadm join 192.168.66.33:6443 --token y2pry5.ohgmbult63t5mtpk \
-	--discovery-token-ca-cert-hash sha256:59b7a8394672894b6e7c83da19d5191a50b517212f343b9dbf82464bbc37f8fc 
+kubeadm join 192.168.66.33:6443 --token 523s4t.txesa6sfn3ranr99 \
+	--discovery-token-ca-cert-hash sha256:0f009dd30307204f4f7e123ffe54e75a7d1ace8f536021b4ee9be83b503b4f92 

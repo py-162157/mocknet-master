@@ -692,16 +692,6 @@ func DynamicProgram(line []element, k uint, edges map[HashEdge]uint, alpha float
 	}
 	log.Println("table J has been completed")
 
-	// 二维矩阵(𝑣𝑛 × 𝑣𝑛) ，D(𝑖,𝑗) 存储了两端均在区间(𝑖,𝑗)的所有边权总和，其计算公式为:
-	// D(i, j+1) = D(i, j) + J(i, j, j+1)
-	/*D := Array2(uint(vertex_num), uint(vertex_num))
-	for _, i := range makerange(0, vertex_num-1) {
-		for _, j := range makerange(int(i+1), vertex_num) {
-			D[i][j] = D[i][j-1] + J[i][j-1][j]
-		}
-	}*/
-	log.Println("table D has been completed")
-
 	// 二维矩阵(𝑣𝑛 × 𝑣𝑛) ，B(𝑖,𝑗) 存储了区间(𝑖,𝑗)内的所有点权总和，其计算公式为：
 	// B(i, j+1) = B(i, j) + W(j+1)
 	B := Array2(uint(vertex_num), uint(vertex_num))
@@ -751,32 +741,9 @@ func DynamicProgram(line []element, k uint, edges map[HashEdge]uint, alpha float
 	}
 	log.Println("table C has been completed")
 
-	// A(i, j, k)存储了将子问题[i, j]分割为k部分的最优解的切断边权总和，最大cluster和最小cluster
-	// Ap(i, j, k)存储了将子问题[i, j]分割为k部分的最优解的切割位置
-
-	// type cost struct {
-	// 	   edges_weight_cut_off uint
-	// 	   max_cluster_weight   uint
-	// 	   min_cluster_weight   uint
-	// }
+	// A(i, j, k)代表了子问题[i, j]分割为k部分
 	A := Array3Cost(uint(vertex_num), uint(vertex_num), k+1)
 	log.Println("The average weight of cluster is:", float32(total_node_weight+total_edge_weight)/float32(k))
-
-	/*for _, i := range makerange(0, vertex_num) {
-		for _, j := range makerange(0, vertex_num) {
-			for _, k := range makerange(0, vertex_num) {
-				fmt.Println("J(", i, ",", j, ",", k, ") =", J[i][j][k])
-			}
-		}
-	}
-
-	for _, i := range makerange(0, vertex_num) {
-		for _, j := range makerange(0, vertex_num) {
-			for _, k := range makerange(0, vertex_num) {
-				fmt.Println("C(", i, ",", j, ",", k, ") =", C[i][j][k])
-			}
-		}
-	}*/
 
 	for _, i := range makerange(0, vertex_num) {
 		for _, j := range makerange(int(i), vertex_num) {
@@ -787,9 +754,6 @@ func DynamicProgram(line []element, k uint, edges map[HashEdge]uint, alpha float
 				min_cluster_weight:   B[i][j],
 				variance:             0,
 				cluster_weight_mean:  float64(B[i][j]),
-
-				//max_cluster_weight:   B[i][j] + D[i][j],
-				//min_cluster_weight:   B[i][j] + D[i][j],
 			}
 		}
 		A[i][i][1].cut_points = []uint{}
@@ -827,31 +791,11 @@ func DynamicProgram(line []element, k uint, edges map[HashEdge]uint, alpha float
 							Aright := A[cut_point+1][j][right]
 							// A(i, j, q) = Min{ A(i, k, q/2) , A(k+1, j, q-q/2) }
 
-							// 1. 在该点切割所产生的最大cluster = max(左子问题的最大cluster, 右子问题的最大cluster)
-							//max_cluster_weight := math.Max(float64(Aleft.max_cluster_weight), float64(Aright.max_cluster_weight))
-							// 2. 在该点切割所产生的最小cluster = min(左子问题的最小cluster, 右子问题的最小cluster)
-							//min_cluster_weight := math.Min(float64(Aleft.min_cluster_weight), float64(Aright.min_cluster_weight))
-
 							left_cluster_num := float64((len(Aleft.cut_points) + 1))
 							right_cluster_num := float64((len(Aright.cut_points) + 1))
 							present_cluster_weight_mean := (Aleft.cluster_weight_mean*left_cluster_num + Aright.cluster_weight_mean*right_cluster_num) / (left_cluster_num + right_cluster_num)
 
-							/*// 被切一刀后新增的并不是C[i][j][cut_point]
-							left_border := uint(0)
-							right_border := uint(0)
-							if left == 1 {
-								left_border = i
-							} else {
-								left_border = A[i][cut_point][left].cut_points[len(A[i][cut_point][left].cut_points)-1]
-							}
-
-							if right == 1 {
-								right_border = j
-							} else {
-								right_border = A[cut_point+1][j][right].cut_points[0]
-							}*/
-
-							// 3. 在该点切割所切断的edge weight总和 = 左子问题的edge weight + 右子问题的edge weight + 新产生的cost
+							// 在该点切割所切断的edge weight总和 = 左子问题的edge weight + 右子问题的edge weight + 新产生的cost
 							edge_weight_cut_off := Aleft.edges_weight_cut_off + Aright.edges_weight_cut_off + C[i][j][cut_point]
 							M := math.Sqrt(float64(edge_weight_cut_off) / float64((k-1)*uint(vertex_num)*max_edge_weight))
 							// 左右子问题总方差 = 组内方差 + 组间方差
