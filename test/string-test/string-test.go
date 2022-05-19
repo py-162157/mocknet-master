@@ -2,14 +2,11 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 )
 
 func main() {
-	value := ""
-	value = value + "node1: " + "link.Node1.Name" + ", "
-	value = value + "node2: " + "link.Node2.Name" + ", "
-	value = value + "node1_inf: " + "link.Node1Inf" + ", "
-	value = value + "node2_inf: " + "link.Node2Inf"
+	addr := [4]uint8{244, 0, 0, 0}
 
-	fmt.Println(value)
+	fmt.Println(strconv.Itoa(int(addr[0])))
 }

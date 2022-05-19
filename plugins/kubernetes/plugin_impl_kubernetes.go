@@ -362,7 +362,7 @@ func (p *Plugin) Create_Deployment(assignment map[string]uint, cores int, start_
 		} else {
 			p.Log.Infoln("created deployment", podname)
 		}
-		//p.Log.Infoln("For pod", podname, "main core is", main_core_id, "worker cores are", p.WorkerThreadCoreAssignment[int(hostid)].core_string)
+		p.Log.Infoln("For pod", podname, "in worker", hostid, ", main core is", main_core_id, "worker cores are", p.WorkerThreadCoreAssignment[int(hostid)].core_string)
 	}
 }
 
@@ -460,6 +460,8 @@ func make_deployment(name string, worker_id uint, worker_core_id string, main_co
 	var replica int32 = 1
 	privileged := true
 	host := "worker" + strconv.Itoa(int(worker_id))
+
+	//sed -i "47c corelist-workers ${WORKER_CORE_ASSGIENMENT}" /etc/vpp/startup.conf
 	cmd :=
 		`sed -i "44c main-core ${MAIN_CORE_ASSGIENMENT}" /etc/vpp/startup.conf
 sed -i "47c corelist-workers ${WORKER_CORE_ASSGIENMENT}" /etc/vpp/startup.conf

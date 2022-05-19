@@ -1006,6 +1006,7 @@ func generate_edges(message rpctest.Message) ([]Edge, uint) {
 	node_weights := make(map[string]uint)
 	for _, edge := range topo.Links {
 		node_weights[edge.Node1.Name] += 1
+		node_weights[edge.Node2.Name] += 1
 	}
 
 	for _, edge := range topo.Links {
@@ -1017,6 +1018,17 @@ func generate_edges(message rpctest.Message) ([]Edge, uint) {
 			end: element(Node{
 				name:   edge.Node2.Name,
 				weight: node_weights[edge.Node2.Name],
+			}),
+			weight: 1,
+		})
+		edges = append(edges, Edge{
+			start: element(Node{
+				name:   edge.Node2.Name,
+				weight: node_weights[edge.Node2.Name],
+			}),
+			end: element(Node{
+				name:   edge.Node1.Name,
+				weight: node_weights[edge.Node1.Name],
 			}),
 			weight: 1,
 		})

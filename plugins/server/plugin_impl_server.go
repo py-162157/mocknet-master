@@ -88,17 +88,18 @@ func (p *Plugin) start_server() {
 				p.Log.Infoln("The message's type is 'emunet_creation'")
 				p.Log.Infoln("Start to create pods")
 				//p.Kubernetes.AffinityClusterPartition(message)
+				p.ETCD.Commit_Create_Info(message)
 				assignment := p.Kubernetes.AffinityClusterPartition(message, 1)
-				go p.watch_pod_creation_finished(assignment)
 				p.ETCD.Directory_Create(assignment)
 				p.Kubernetes.Make_Topology(message)
 				if message.Command.EmunetCreation.Emunet.Type == "fat-tree" {
 					p.ETCD.Send_pod_type_pair(p.Kubernetes.SenderPods, p.Kubernetes.ReceiverPods, p.Kubernetes.PodPair)
 					p.ETCD.Send_Topology_Type("fat-tree")
+					go p.watch_pod_creation_finished(assignment, "fat-tree")
 				} else {
 					p.ETCD.Send_Topology_Type("other")
+					go p.watch_pod_creation_finished(assignment, "other")
 				}
-				p.ETCD.Commit_Create_Info(message)
 				p.Kubernetes.Create_Deployment(assignment, 1, 11, 31)
 				if message.Command.EmunetCreation.Emunet.Type == "fat-tree" {
 					go p.ETCD.Wait_For_MAC()
@@ -156,7 +157,7 @@ func (p *Plugin) watch_tap_recreation(ctx context.Context) error {
 	}
 }
 
-func (p *Plugin) watch_pod_creation_finished(assignment map[string]uint) {
+func (p *Plugin) watch_pod_creation_finished(assignment map[string]uint, topotype string) {
 	wg := sync.WaitGroup{}
 	wg.Add(len(assignment))
 	for podname, _ := range assignment {
@@ -176,6 +177,8 @@ func (p *Plugin) watch_pod_creation_finished(assignment map[string]uint) {
 			}
 
 			p.Log.Infoln("pod", pod_name, "is ready to be config")
+			// if topology type is other, use 10.1.x.x based on control plane ip, namely /mocknet/pods/
+			// else use ip assigned when sending link info, namely /mocknet/links/
 			p.ETCD.Send_Pod_Info(mocknet_pod)
 
 			wg.Done()

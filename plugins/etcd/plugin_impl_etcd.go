@@ -93,7 +93,7 @@ func (p *Plugin) Close() error {
 		panic("error when send close signal")
 	}
 
-	p.wait_for_response("Close")
+	//p.wait_for_response("Close")
 
 	// clear the database
 	_, err = kvs.Delete(context.Background(), "/", clientv3.WithPrefix())
@@ -113,6 +113,8 @@ func (p *Plugin) Commit_Create_Info(message rpctest.Message) error {
 	ctx := context.Background()
 	kvc := clientv3.NewKV(p.EtcdClient)
 
+	present_netaddr := [4]uint8{10, 1, 0, 0}
+
 	for _, link := range links {
 		node1 := link.Node1.Name
 		node2 := link.Node2.Name
@@ -122,27 +124,55 @@ func (p *Plugin) Commit_Create_Info(message rpctest.Message) error {
 		p.InfToVni[node1+"-"+intf1] = p.VxlanVni
 		p.InfToVni[node2+"-"+intf2] = p.VxlanVni
 		p.VxlanVni += 1
-
 	}
 
 	//p.Log.Infoln(message)
 
 	for _, link := range links {
-		value := ""
-		value = value + "node1:" + link.Node1.Name + ","
-		value = value + "node2:" + link.Node2.Name + ","
-		value = value + "node1_inf:" + link.Node1Inf + ","
-		value = value + "node2_inf:" + link.Node2Inf + ","
-		value = value + "vni:" + strconv.Itoa(p.InfToVni[link.Node1.Name+"-"+link.Node1Inf])
-		//p.Log.Infoln("key =", "/mocknet/link/"+link.Name, "value =", value)
+		// part1
+		intf1addr := strconv.Itoa(int(present_netaddr[0])) + "." + strconv.Itoa(int(present_netaddr[1])) + "." + strconv.Itoa(int(present_netaddr[2])) + "." + strconv.Itoa(int(present_netaddr[3]+1))
+		intf2addr := strconv.Itoa(int(present_netaddr[0])) + "." + strconv.Itoa(int(present_netaddr[1])) + "." + strconv.Itoa(int(present_netaddr[2])) + "." + strconv.Itoa(int(present_netaddr[3]+2))
+		present_netaddr = assign_netaddr(present_netaddr)
+		//p.Log.Infoln("present_netaddr =", present_netaddr)
+		value1 := ""
+		value1 = value1 + "node1:" + link.Node1.Name + ","
+		value1 = value1 + "node2:" + link.Node2.Name + ","
+		value1 = value1 + "node1_inf:" + link.Node1Inf + ","
+		value1 = value1 + "node2_inf:" + link.Node2Inf + ","
+		value1 = value1 + "vni:" + strconv.Itoa(p.InfToVni[link.Node1.Name+"-"+link.Node1Inf]) + ","
+		value1 = value1 + "node1intaddr:" + intf1addr + ","
+		value1 = value1 + "node2intaddr:" + intf2addr
 
-		_, err := kvc.Put(ctx, "/mocknet/link/"+link.Name, value)
+		p.Log.Infoln("key =", "/mocknet/link/"+link.Name, "value =", value1)
+
+		_, err := kvc.Put(ctx, "/mocknet/link/"+link.Name, value1)
+
+		if err != nil {
+			p.Log.Errorln(err)
+			panic(err)
+		}
+
+		// part2
+		name := strings.Split(link.Name, "-")[1] + "-" + strings.Split(link.Name, "-")[0]
+		value2 := ""
+		value2 = value2 + "node1:" + link.Node2.Name + ","
+		value2 = value2 + "node2:" + link.Node1.Name + ","
+		value2 = value2 + "node1_inf:" + link.Node2Inf + ","
+		value2 = value2 + "node2_inf:" + link.Node1Inf + ","
+		value2 = value2 + "vni:" + strconv.Itoa(p.InfToVni[link.Node2.Name+"-"+link.Node2Inf]) + ","
+		value2 = value2 + "node1intaddr:" + intf2addr + ","
+		value2 = value2 + "node2intaddr:" + intf1addr
+
+		p.Log.Infoln("key =", "/mocknet/link/"+name, "value =", value2)
+
+		_, err = kvc.Put(ctx, "/mocknet/link/"+name, value2)
 
 		if err != nil {
 			p.Log.Errorln(err)
 			panic(err)
 		}
 	}
+	kvc.Put(ctx, "/mocknet/link/done", "done")
 	p.Log.Infoln("successfully commit link data to master etcd")
 	p.wait_for_response("ParseTopologyInfo")
 
@@ -291,7 +321,7 @@ func (p *Plugin) Send_pod_type_pair(SenderPods []string, ReceiverPods []string, 
 
 func (p *Plugin) Get_Receiver_Ready() error {
 	kvs := clientv3.NewKV(p.EtcdClient)
-	key := "mocknet/command/GetReceiverReady"
+	key := "/mocknet/command/GetReceiverReady"
 	value := "true"
 	kvs.Put(context.Background(), key, value)
 
@@ -302,13 +332,14 @@ func (p *Plugin) Get_Receiver_Ready() error {
 
 func (p *Plugin) FullTest() error {
 	kvs := clientv3.NewKV(p.EtcdClient)
-	key := "mocknet/command/FullTest"
+	key := "/mocknet/command/FullTest"
 	value := "true"
 	kvs.Put(context.Background(), key, value)
+	p.Log.Infoln("send full test command")
 
 	return nil
-}
 
+}
 func (p *Plugin) Wait_Pod_Tap_Creation() {
 	p.wait_for_response("PodTapCreation")
 }
@@ -353,4 +384,49 @@ func (p *Plugin) Directory_Create(assignment map[string]uint) {
 func (p *Plugin) Wait_For_MAC() {
 	p.wait_for_response("MACupload")
 	p.Send_Order("StaticARP")
+}
+
+func parse_ipv4_address(ipv4 string) [4]uint8 {
+	ip_addr := strings.Split(ipv4, ".")
+	ip_addr_slice := make([]uint8, 4)
+	for i := 0; i < 4; i++ {
+		conv, err := strconv.Atoi(ip_addr[i])
+		if err != nil {
+			panic("error parsing dst ip address string to int")
+		}
+		ip_addr_slice[i] = uint8(conv)
+	}
+	return [4]uint8{
+		ip_addr_slice[0],
+		ip_addr_slice[1],
+		ip_addr_slice[2],
+		ip_addr_slice[3],
+	}
+}
+
+func assign_netaddr(present_addr [4]uint8) [4]uint8 {
+	if present_addr[3] < 252 {
+		present_addr[3] += 4
+		return present_addr
+	} else {
+		present_addr[3] = uint8(int(present_addr[3]+4) & 256)
+		if present_addr[2] < 255 {
+			present_addr[2] += 1
+			return present_addr
+		} else {
+			present_addr[2] = 0
+			if present_addr[1] < 255 {
+				present_addr[1] += 1
+				return present_addr
+			} else {
+				present_addr[1] = 0
+				if present_addr[0] < 255 {
+					present_addr[0] += 1
+					return present_addr
+				} else {
+					panic("the ip addr has reached MAX")
+				}
+			}
+		}
+	}
 }
