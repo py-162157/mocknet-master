@@ -87,9 +87,9 @@ func (p *Plugin) start_server() {
 				p.Log.Infoln("Server receive a message")
 				p.Log.Infoln("The message's type is 'emunet_creation'")
 				p.Log.Infoln("Start to create pods")
-				//p.Kubernetes.AffinityClusterPartition(message)
 				p.ETCD.Commit_Create_Info(message)
-				assignment := p.Kubernetes.AffinityClusterPartition(message, 1)
+				assignment := p.Kubernetes.AffinityClusterPartition(message)
+				//p.Kubernetes.Create_Deployment(assignment, 1, 11, 25, 1, 26, 40)
 				p.ETCD.Directory_Create(assignment)
 				p.Kubernetes.Make_Topology(message)
 				if message.Command.EmunetCreation.Emunet.Type == "fat-tree" {
@@ -100,11 +100,13 @@ func (p *Plugin) start_server() {
 					p.ETCD.Send_Topology_Type("other")
 					go p.watch_pod_creation_finished(assignment, "other")
 				}
-				p.Kubernetes.Create_Deployment(assignment, 1, 11, 31)
+				p.Kubernetes.Create_Deployment(assignment, 1, 5, 12, 1, 13, 20)
 				if message.Command.EmunetCreation.Emunet.Type == "fat-tree" {
 					go p.ETCD.Wait_For_MAC()
+					go p.ETCD.Wait_For_Routes()
+					go p.ETCD.Wait_For_Speed()
 				}
-				//go p.watch_tap_recreation(context.Background())
+				go p.watch_tap_recreation(context.Background())
 			} else if message.Type == 3 {
 				// message type = 3: full speed test
 				p.Log.Println("receive a test command!")

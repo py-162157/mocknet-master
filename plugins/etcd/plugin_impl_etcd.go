@@ -143,7 +143,7 @@ func (p *Plugin) Commit_Create_Info(message rpctest.Message) error {
 		value1 = value1 + "node1intaddr:" + intf1addr + ","
 		value1 = value1 + "node2intaddr:" + intf2addr
 
-		p.Log.Infoln("key =", "/mocknet/link/"+link.Name, "value =", value1)
+		//p.Log.Infoln("key =", "/mocknet/link/"+link.Name, "value =", value1)
 
 		_, err := kvc.Put(ctx, "/mocknet/link/"+link.Name, value1)
 
@@ -163,7 +163,7 @@ func (p *Plugin) Commit_Create_Info(message rpctest.Message) error {
 		value2 = value2 + "node1intaddr:" + intf2addr + ","
 		value2 = value2 + "node2intaddr:" + intf1addr
 
-		p.Log.Infoln("key =", "/mocknet/link/"+name, "value =", value2)
+		//p.Log.Infoln("key =", "/mocknet/link/"+name, "value =", value2)
 
 		_, err = kvc.Put(ctx, "/mocknet/link/"+name, value2)
 
@@ -384,6 +384,16 @@ func (p *Plugin) Directory_Create(assignment map[string]uint) {
 func (p *Plugin) Wait_For_MAC() {
 	p.wait_for_response("MACupload")
 	p.Send_Order("StaticARP")
+}
+
+func (p *Plugin) Wait_For_Routes() {
+	p.wait_for_response("RouteUpload")
+	p.Send_Order("RouteSync")
+}
+
+func (p *Plugin) Wait_For_Speed() {
+	p.wait_for_response("SpeedUpload")
+	p.Send_Order("SpeedDownload")
 }
 
 func parse_ipv4_address(ipv4 string) [4]uint8 {

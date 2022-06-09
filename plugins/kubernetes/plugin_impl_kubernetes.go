@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"bytes"
 	"flag"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,20 +54,24 @@ type Deps struct {
 	// key: interface id in mininet(podname-intfid), value: hostname
 	IntfToHost map[string]string
 	// key: node_ip
-	Nodeinfos                  map[string]Nodeinfo
-	AssignedWorkerNumber       int
-	PodList                    MocknetPodSync
-	PluginInitFinished         bool
-	SenderPods                 []string
-	ReceiverPods               []string
-	Pod_name_reflector         map[string]string      // key: completed name, value: simplified name
-	Pod_name_reflector_rev     map[string]string      // key: simplified name, value: completed name
-	WorkerThreadCoreAssignment map[int]*WorkerThreads // key: worker-name, value: present core to be allocated
-	MainThreadCoreAssignment   map[int]int            // key: worker-name, value: present core to be allocated
-	PodPair                    map[string]string      // pod pair for test (sender-receiver)
+	Nodeinfos              map[string]Nodeinfo
+	AssignedWorkerNumber   int
+	PodList                MocknetPodSync
+	PluginInitFinished     bool
+	SenderPods             []string
+	ReceiverPods           []string
+	Pod_name_reflector     map[string]string          // key: completed name, value: simplified name
+	Pod_name_reflector_rev map[string]string          // key: simplified name, value: completed name
+	PodCoreAssignment      map[int]*PodCoreAssignment // key: worker-name, value: present core to be allocated
+	PodPair                map[string]string          // pod pair for test (sender-receiver)
 }
 
-type WorkerThreads struct {
+type PodCoreAssignment struct {
+	switchs CoreAssignment
+	hosts   CoreAssignment
+}
+
+type CoreAssignment struct {
 	start       int
 	end         int
 	core_string string
@@ -125,8 +130,7 @@ func (p *Plugin) Init() error {
 	}
 	p.Pod_name_reflector = make(map[string]string)
 	p.Pod_name_reflector_rev = make(map[string]string)
-	p.WorkerThreadCoreAssignment = make(map[int]*WorkerThreads)
-	p.MainThreadCoreAssignment = make(map[int]int)
+	p.PodCoreAssignment = make(map[int]*PodCoreAssignment)
 	p.SenderPods = make([]string, 0)
 	p.ReceiverPods = make([]string, 0)
 	p.PodPair = make(map[string]string)
@@ -261,56 +265,65 @@ func (p *Plugin) Make_Topology(message rpctest.Message) error {
 			}
 			k += 2
 		}
+		i := 0
 
+		// strictly mark left side as sender and right side as receiver
+		/*
+			for _, pod := range p.MocknetTopology.Pods {
+				if strings.Contains(pod.Name, "h") {
+					switch_id_string := strings.Split(pod.Name, "s")[1]
+					switch_id, err := strconv.Atoi(switch_id_string)
+					if err != nil {
+						panic(err)
+					}
+					if switch_id <= k*k*3/4 {
+						// mark left side as sender
+						p.SenderPods = append(p.SenderPods, pod.Name)
+					} else {
+						// mark right side as receiver
+						p.ReceiverPods = append(p.ReceiverPods, pod.Name)
+					}
+				}
+			}
+		*/
+
+		// randomly pair sender and receiver
+
+		rand.Seed(time.Now().UnixMicro())
+		rand.Shuffle(len(p.MocknetTopology.Pods), func(i, j int) {
+			p.MocknetTopology.Pods[i], p.MocknetTopology.Pods[j] = p.MocknetTopology.Pods[j], p.MocknetTopology.Pods[i]
+		})
 		for _, pod := range p.MocknetTopology.Pods {
 			if strings.Contains(pod.Name, "h") {
-				switch_id_string := strings.Split(pod.Name, "s")[1]
-				switch_id, err := strconv.Atoi(switch_id_string)
-				if err != nil {
-					panic(err)
-				}
-				if switch_id <= k*k*3/4 {
-					// mark left side as sender
+				if i%2 == 0 {
 					p.SenderPods = append(p.SenderPods, pod.Name)
 				} else {
-					// mark right side as receiver
 					p.ReceiverPods = append(p.ReceiverPods, pod.Name)
 				}
+				i++
 			}
 		}
 
 		p.Log.Println("p.SenderPods =", p.SenderPods)
 		p.Log.Println("p.ReceiverPods =", p.ReceiverPods)
-		var i int
 		for i = 0; i < len(p.SenderPods); i++ {
 			p.PodPair[p.SenderPods[i]] = p.ReceiverPods[i]
 			p.PodPair[p.ReceiverPods[i]] = p.SenderPods[i]
 		}
+
+		/*for _, pod := range message.Command.EmunetCreation.Emunet.Pods {
+			if strings.Contains(pod.Name, "h") {
+				p.SenderPods = append(p.SenderPods, pod.Name)
+			}
+		}*/
 	}
 
 	return nil
 }
 
 // cores: how many cores are assigned to a pod
-func (p *Plugin) AffinityClusterPartition(message rpctest.Message, cores int) map[string]uint {
+func (p *Plugin) AffinityClusterPartition(message rpctest.Message) map[string]uint {
 	workers := make(map[uint]string, 0)
-
-	for i := 1; i <= p.AssignedWorkerNumber; i++ {
-		if cores == 1 {
-			p.WorkerThreadCoreAssignment[i] = &WorkerThreads{
-				start: 0,
-				end:   0,
-			}
-		} else {
-			p.WorkerThreadCoreAssignment[i] = &WorkerThreads{
-				start: 0,
-				end:   cores - 1,
-			}
-		}
-
-		p.MainThreadCoreAssignment[i] = 0
-	}
-
 	worker_assignment := affinity.AffinityClusterPartition(message, uint(p.AssignedWorkerNumber), 0.5, true) // -1 for master node
 	p.Log.Infoln("the assignment is:", worker_assignment)
 
@@ -322,47 +335,153 @@ func (p *Plugin) AffinityClusterPartition(message rpctest.Message, cores int) ma
 	return worker_assignment
 }
 
-// cores: how many cores are assigned to a pod
+// switch_cores: how many cores are assigned to switch pod.
 //
-// start_core: the assignment start from which core
+// switch_start_core: the assignment of switch pod start from which core.
 //
-// start_core: the assignment end till which core.
-func (p *Plugin) Create_Deployment(assignment map[string]uint, cores int, start_core int, end_core int) {
-	duration := start_core - end_core + 1
-	for podname, hostid := range assignment {
-		// assign core to pod-side vpp
-		start := p.WorkerThreadCoreAssignment[int(hostid)].start
-		end := p.WorkerThreadCoreAssignment[int(hostid)].end
-		if cores == 1 {
-			p.WorkerThreadCoreAssignment[int(hostid)].core_string = strconv.Itoa(start + start_core)
-			p.WorkerThreadCoreAssignment[int(hostid)].start = (start + 1) % duration
+// switch_start_core: the assignment of switch pod end till which core.
+//
+// host_cores: how many host pods are assigned to a core.
+//
+// host_start_core: the assignment of host pod start from which core.
+//
+// host_start_core: the assignment of host pod end till which core.
+func (p *Plugin) Create_Deployment(
+	assignment map[string]uint,
+	switch_cores int,
+	switch_start_core int,
+	switch_end_core int,
+	host_cores int,
+	host_start_core int,
+	host_end_core int,
+) {
+	assign_count := make(map[string]string)
+
+	for i := 1; i <= p.AssignedWorkerNumber; i++ {
+		var switch_end int
+		var host_end int
+		if host_cores == 1 {
+			host_end = 0
 		} else {
-			if start < end {
-				p.WorkerThreadCoreAssignment[int(hostid)].core_string = strconv.Itoa(start+start_core) + "-" + strconv.Itoa(end+start_core)
+			host_end = host_cores - 1
+		}
+		if switch_cores == 1 {
+			switch_end = 0
+		} else {
+			switch_end = switch_cores - 1
+		}
+		p.PodCoreAssignment[i] = &PodCoreAssignment{
+			switchs: CoreAssignment{
+				start: 0,
+				end:   switch_end,
+			},
+			hosts: CoreAssignment{
+				start: 0,
+				end:   host_end,
+			},
+		}
+	}
+
+	for podname, hostid := range assignment {
+		hostid_string := strconv.Itoa(int(hostid))
+		if strings.Contains(podname, "h") {
+			// assign host pod vpp to cores
+			duration := host_start_core - host_end_core + 1
+			start := p.PodCoreAssignment[int(hostid)].hosts.start
+			end := p.PodCoreAssignment[int(hostid)].hosts.end
+			if host_cores == 1 {
+				assign_string := strconv.Itoa(start + host_start_core)
+				p.PodCoreAssignment[int(hostid)].hosts.core_string = assign_string
+				p.PodCoreAssignment[int(hostid)].hosts.start = (start + 1) % duration
+				if _, ok := assign_count[hostid_string+"-"+"host"+"-"+assign_string]; ok {
+					assign_count[hostid_string+"-"+"host"+"-"+assign_string] = assign_count[hostid_string+"-"+"host"+"-"+assign_string] + "," + podname
+				} else {
+					assign_count[hostid_string+"-"+"host"+"-"+assign_string] = podname
+				}
 			} else {
-				list1 := strconv.Itoa(start_core) + "-" + strconv.Itoa(start+start_core)
-				list2 := strconv.Itoa(end+end_core) + "-" + strconv.Itoa(end_core)
-				p.WorkerThreadCoreAssignment[int(hostid)].core_string = list1 + "," + list2
+				if start < end {
+					assign_string := strconv.Itoa(start+host_start_core) + "-" + strconv.Itoa(end+host_start_core)
+					p.PodCoreAssignment[int(hostid)].hosts.core_string = assign_string
+					if _, ok := assign_count[hostid_string+"-"+"host"+"-"+assign_string]; ok {
+						assign_count[hostid_string+"-"+"host"+"-"+assign_string] = assign_count[hostid_string+"-"+"host"+"-"+assign_string] + "," + podname
+					} else {
+						assign_count[hostid_string+"-"+"host"+"-"+assign_string] = podname
+					}
+				} else {
+					list1 := strconv.Itoa(host_start_core) + "-" + strconv.Itoa(start+host_start_core)
+					list2 := strconv.Itoa(end+host_end_core) + "-" + strconv.Itoa(host_end_core)
+					assign_string := list1 + "," + list2
+					p.PodCoreAssignment[int(hostid)].hosts.core_string = assign_string
+					if _, ok := assign_count[hostid_string+"-"+"host"+"-"+assign_string]; ok {
+						assign_count[hostid_string+"-"+"host"+"-"+assign_string] = assign_count[hostid_string+"-"+"host"+"-"+assign_string] + "," + podname
+					} else {
+						assign_count[hostid_string+"-"+"host"+"-"+assign_string] = podname
+					}
+				}
+
+				p.PodCoreAssignment[int(hostid)].hosts.start = (start + host_cores) % duration
+				p.PodCoreAssignment[int(hostid)].hosts.end = (end + host_cores) % duration
 			}
 
-			p.WorkerThreadCoreAssignment[int(hostid)].start = (start + cores) % duration
-			p.WorkerThreadCoreAssignment[int(hostid)].end = (end + cores) % duration
-		}
-
-		// use core 32-36 as pod worker thread cpus
-		main_core_id := 32 + p.MainThreadCoreAssignment[int(hostid)]%5
-		p.MainThreadCoreAssignment[int(hostid)] += 1
-
-		// key step to create pod
-		deployment := make_deployment(podname, hostid, p.WorkerThreadCoreAssignment[int(hostid)].core_string, main_core_id)
-
-		if _, err := p.ClientSet.AppsV1().Deployments(p.K8sNamespace).Create(&deployment); err != nil {
-			p.Log.Errorln("failed to create deployment:", podname)
-			panic(err)
+			deployment := make_deployment(podname, hostid, p.PodCoreAssignment[int(hostid)].hosts.core_string)
+			if _, err := p.ClientSet.AppsV1().Deployments(p.K8sNamespace).Create(&deployment); err != nil {
+				p.Log.Errorln("failed to create deployment:", podname)
+				panic(err)
+			} else {
+				p.Log.Infoln("For host", podname, "in worker", hostid, ", core is", p.PodCoreAssignment[int(hostid)].hosts.core_string)
+			}
+			//p.Log.Infoln("For host", podname, "in worker", hostid, ", core is", p.PodCoreAssignment[int(hostid)].hosts.core_string)
 		} else {
-			p.Log.Infoln("created deployment", podname)
+			// assign core to switch pod vpp
+			duration := switch_start_core - switch_end_core + 1
+			start := p.PodCoreAssignment[int(hostid)].switchs.start
+			end := p.PodCoreAssignment[int(hostid)].switchs.end
+			if switch_cores == 1 {
+				assign_string := strconv.Itoa(start + switch_start_core)
+				p.PodCoreAssignment[int(hostid)].switchs.core_string = assign_string
+				p.PodCoreAssignment[int(hostid)].switchs.start = (start + 1) % duration
+				if _, ok := assign_count[hostid_string+"-"+"switch"+"-"+assign_string]; ok {
+					assign_count[hostid_string+"-"+"switch"+"-"+assign_string] = assign_count[hostid_string+"-"+"switch"+"-"+assign_string] + "," + podname
+				} else {
+					assign_count[hostid_string+"-"+"switch"+"-"+assign_string] = podname
+				}
+			} else {
+				if start < end {
+					assign_string := strconv.Itoa(start+switch_start_core) + "-" + strconv.Itoa(end+switch_start_core)
+					p.PodCoreAssignment[int(hostid)].switchs.core_string = assign_string
+					if _, ok := assign_count[hostid_string+"-"+"switch"+"-"+assign_string]; ok {
+						assign_count[hostid_string+"-"+"switch"+"-"+assign_string] = assign_count[hostid_string+"-"+"switch"+"-"+assign_string] + "," + podname
+					} else {
+						assign_count[hostid_string+"-"+"switch"+"-"+assign_string] = podname
+					}
+				} else {
+					list1 := strconv.Itoa(switch_start_core) + "-" + strconv.Itoa(start+switch_start_core)
+					list2 := strconv.Itoa(end+switch_end_core) + "-" + strconv.Itoa(switch_end_core)
+					assign_string := list1 + "," + list2
+					p.PodCoreAssignment[int(hostid)].switchs.core_string = assign_string
+					if _, ok := assign_count[hostid_string+"-"+"switch"+"-"+assign_string]; ok {
+						assign_count[hostid_string+"-"+"switch"+"-"+assign_string] = assign_count[hostid_string+"-"+"switch"+"-"+assign_string] + "," + podname
+					} else {
+						assign_count[hostid_string+"-"+"switch"+"-"+assign_string] = podname
+					}
+				}
+
+				p.PodCoreAssignment[int(hostid)].switchs.start = (start + switch_cores) % duration
+				p.PodCoreAssignment[int(hostid)].switchs.end = (end + switch_cores) % duration
+			}
+
+			deployment := make_deployment(podname, hostid, p.PodCoreAssignment[int(hostid)].switchs.core_string)
+			if _, err := p.ClientSet.AppsV1().Deployments(p.K8sNamespace).Create(&deployment); err != nil {
+				p.Log.Errorln("failed to create deployment:", podname)
+				panic(err)
+			} else {
+				p.Log.Infoln("For switch", podname, "in worker", hostid, ", core is", p.PodCoreAssignment[int(hostid)].switchs.core_string)
+			}
+			//p.Log.Infoln("For switch", podname, "in worker", hostid, ", core is", p.PodCoreAssignment[int(hostid)].switchs.core_string)
 		}
-		p.Log.Infoln("For pod", podname, "in worker", hostid, ", main core is", main_core_id, "worker cores are", p.WorkerThreadCoreAssignment[int(hostid)].core_string)
+	}
+	for core, podname := range assign_count {
+		p.Log.Infoln("core = ", core, "pod =", podname)
 	}
 }
 
@@ -456,15 +575,15 @@ func (p *Plugin) Is_Creation_Completed(pod_name string) bool {
 	return true
 }
 
-func make_deployment(name string, worker_id uint, worker_core_id string, main_core_id int) appsv1.Deployment {
+func make_deployment(name string, worker_id uint, core_id string) appsv1.Deployment {
 	var replica int32 = 1
 	privileged := true
 	host := "worker" + strconv.Itoa(int(worker_id))
 
+	//sed -i "44c main-core ${CORE_ASSGIENMENT}" /etc/vpp/startup.conf
 	//sed -i "47c corelist-workers ${WORKER_CORE_ASSGIENMENT}" /etc/vpp/startup.conf
 	cmd :=
-		`sed -i "44c main-core ${MAIN_CORE_ASSGIENMENT}" /etc/vpp/startup.conf
-sed -i "47c corelist-workers ${WORKER_CORE_ASSGIENMENT}" /etc/vpp/startup.conf
+		`sed -i "47c corelist-workers ${CORE_ASSGIENMENT}" /etc/vpp/startup.conf
 mkdir /run/vpp
 vpp -c /etc/vpp/startup.conf &
 
@@ -544,12 +663,8 @@ done
 									},
 								},
 								{
-									Name:  "WORKER_CORE_ASSGIENMENT",
-									Value: worker_core_id,
-								},
-								{
-									Name:  "MAIN_CORE_ASSGIENMENT",
-									Value: strconv.Itoa(main_core_id),
+									Name:  "CORE_ASSGIENMENT",
+									Value: core_id,
 								},
 							},
 							VolumeMounts: []coreV1.VolumeMount{
