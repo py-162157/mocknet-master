@@ -9,7 +9,8 @@
 
 ## Mocknet-Master
 Mocknet-Master是MockNet仿真系统的控制中心，运行在服务器集群的master机器上（即K8s的master节点）。
-1. algorithm插件里集成了将网络拓扑图映射至各服务器的算法。
-2. server插件与MockNet-CMD进行前后端交互。
-3. etcd插件与etcd数据库进行交互，进而与集群中的各MockNet-Worker进行通信
-4. kubernetes插件与K8S的API进行交互，进行网络的创建和迁移等工作。
+1. mocknet-agent为主程序。
+2. algorithm插件里集成了将网络拓扑图映射至各服务器的算法。
+3. server插件与MockNet-CMD进行前后端交互。
+4. etcd插件与etcd数据库进行交互，进而与集群中的各MockNet-Worker进行通信。
+5. kubernetes插件与K8S的API进行交互，进行网络的创建和迁移等工作。
